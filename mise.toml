@@ -1,0 +1,59 @@
+[settings]
+experimental = true
+idiomatic_version_file_enable_tools = ["rust"]
+lockfile = true
+
+[deps.cargo]
+auto = true
+sources = [
+  "Cargo.toml",
+  "crates/client/Cargo.toml",
+  "crates/server/Cargo.toml",
+  "crates/shared/Cargo.toml",
+]
+outputs = ["Cargo.lock"]
+run = "cargo fetch"
+
+[tools]
+protoc = "latest"
+
+[tasks.build]
+description = "Build the project in debug mode"
+run = "cargo build"
+
+[tasks."build:release"]
+description = "Build the project in release mode"
+run = "cargo build --release"
+
+[tasks.test]
+description = "Run the tests"
+run = "cargo test --all-features"
+
+[tasks."test:ci"]
+description = "Run the full CI pipeline"
+run = [
+  { task = "fmt:check" },
+  { task = "lint" },
+  { task = "test" },
+  { task = "build" },
+]
+
+[tasks."test:verbose"]
+description = "Run the tests without capturing output"
+run = "cargo test --all-features -- --no-capture"
+
+[tasks.fmt]
+description = "Run cargo fmt"
+run = "cargo +nightly fmt --all"
+
+[tasks."fmt:check"]
+description = "Check if cargo fmt would change anything"
+run = "cargo +nightly fmt --all -- --check"
+
+[tasks.lint]
+description = "Run clippy"
+run = "cargo clippy --all-targets --all-features -- -D warnings"
+
+[tasks."lint:fix"]
+description = "Run clippy and auto-fix where possible"
+run = "cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged"

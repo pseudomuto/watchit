@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["David Muto <david.muto@gmail.com>"]
+
+[workspace.dependencies]
+color-eyre = "0.6.5"
+eyre = "0.6.14"
+ratatui = "0.30.2"
+jiff = "0.2"
+prost = "0.14"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros"] }
+toml = "1.1"
+
+prost-types = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+
+[workspace.lints.clippy]
+mod_module_files = "warn"

@@ -1,0 +1,22 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+color-eyre.workspace = true
+ratatui.workspace = true
+jiff.workspace = true
+prost.workspace = true
+serde.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tonic.workspace = true
+shared = { path = "../shared/" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

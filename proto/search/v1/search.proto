@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package search.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse) {}
+}
+
+message SearchRequest {
+  string term = 1;
+}
+
+message SearchResponse {
+  repeated Result results = 1;
+}
+
+message Result {
+  string name = 1;
+  string uri = 2;
+  int32 seeders = 3;
+  int32 leechers = 4;
+  int64 size_bytes = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
