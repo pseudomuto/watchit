@@ -4,7 +4,7 @@ use std::{
 };
 
 use clap::Parser;
-use color_eyre::Result;
+use color_eyre::{Result, eyre::eyre};
 
 #[derive(Parser)]
 struct Cli {
@@ -19,6 +19,18 @@ struct Cli {
     /// Directory containing ca.pem, server.pem and server.key.
     #[arg(long, default_value = "certs")]
     certs_dir: PathBuf,
+
+    /// Base URL of the Jackett instance, e.g. http://localhost:9117.
+    #[arg(long)]
+    jackett_url: String,
+
+    /// Jackett API key, shown on the Jackett dashboard.
+    #[arg(long, env = "WATCHIT_JACKETT_API_KEY", hide_env_values = true)]
+    jackett_api_key: String,
+
+    /// Jackett indexer to search, or "all" for every configured indexer.
+    #[arg(long, default_value = "all")]
+    jackett_indexer: String,
 }
 
 #[tokio::main]
@@ -26,8 +38,14 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
+    // reqwest uses the process-wide rustls provider. Match tonic's ring.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| eyre!("failed to install the rustls crypto provider"))?;
+
     let addr = SocketAddr::new(cli.host, cli.port);
-    let router = server::router(server::tls_config(&cli.certs_dir)?)?;
+    let jackett = server::jackett::Client::new(&cli.jackett_url, cli.jackett_api_key, cli.jackett_indexer)?;
+    let router = server::router(server::tls_config(&cli.certs_dir)?, jackett)?;
 
     println!("listening on {addr}");
     router.serve(addr).await?;

@@ -16,8 +16,10 @@ tonic.workspace = true
 shared = { path = "../shared/" }
 
 [dev-dependencies]
+rustls.workspace = true
 server = { path = "../server/" }
 tempfile.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

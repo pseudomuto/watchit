@@ -1,3 +1,6 @@
+.envrc
+.superpowers/
 debug/
+docs/superpowers/
 target/
 hack/certs/

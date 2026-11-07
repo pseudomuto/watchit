@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <atom:link href="http://localhost:9117/" rel="self" type="application/rss+xml" />
+    <title>AggregateSearch</title>
+    <description>This feed includes all configured trackers</description>
+    <link>http://127.0.0.1/</link>
+    <language>en-US</language>
+    <category>search</category>
+    <item>
+      <title>Ubuntu 24.04 Desktop amd64</title>
+      <guid>https://tracker.example/torrent/1</guid>
+      <jackettindexer id="example">Example</jackettindexer>
+      <type>public</type>
+      <comments>https://tracker.example/torrent/1</comments>
+      <pubDate>Mon, 15 Apr 2024 10:00:00 +0000</pubDate>
+      <size>6114656256</size>
+      <files>1</files>
+      <grabs>100</grabs>
+      <description />
+      <link>http://localhost:9117/dl/example/?jackett_apikey=secret&amp;path=abc&amp;file=Ubuntu</link>
+      <category>4000</category>
+      <enclosure url="http://localhost:9117/dl/example/?jackett_apikey=secret&amp;path=abc&amp;file=Ubuntu" length="6114656256" type="application/x-bittorrent" />
+      <torznab:attr name="category" value="4000" />
+      <torznab:attr name="seeders" value="120" />
+      <torznab:attr name="peers" value="135" />
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:abc&amp;dn=Ubuntu" />
+      <torznab:attr name="downloadvolumefactor" value="0" />
+    </item>
+  </channel>
+</rss>

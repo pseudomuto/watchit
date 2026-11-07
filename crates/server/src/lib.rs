@@ -1,4 +1,5 @@
 pub mod certs;
+pub mod jackett;
 pub mod services;
 
 use std::{io, path::Path};
@@ -20,8 +21,8 @@ pub fn tls_config(dir: &Path) -> io::Result<ServerTlsConfig> {
 }
 
 /// Builds the gRPC router with TLS enabled and all services registered.
-pub fn router(tls: ServerTlsConfig) -> Result<Router, tonic::transport::Error> {
+pub fn router(tls: ServerTlsConfig, jackett: jackett::Client) -> Result<Router, tonic::transport::Error> {
     Ok(Server::builder()
         .tls_config(tls)?
-        .add_service(SearchServiceServer::new(SearchServer::default())))
+        .add_service(SearchServiceServer::new(SearchServer::new(jackett))))
 }

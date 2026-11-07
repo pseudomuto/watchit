@@ -25,9 +25,12 @@ mise run test:ci      # fmt check, clippy, tests, and build
 To run locally, start the server in one terminal and the client in another:
 
 ```sh
-mise run server       # listens on 127.0.0.1:50051
-mise run client
+export WATCHIT_JACKETT_API_KEY=...   # from the Jackett dashboard
+mise run server                      # listens on 127.0.0.1:50051
+mise run client ubuntu               # searches for "ubuntu"
 ```
+
+The server expects Jackett at `http://localhost:9117`. Set `JACKETT_URL` to point it somewhere else.
 
 Both tasks first run `mise run certs:dev`, which generates dev certs in `hack/certs` (gitignored) for `localhost` and
 `127.0.0.1`. Existing certs are left alone. To regenerate them, for example after they expire, delete the directory.
@@ -79,25 +82,32 @@ scp certs/ca.pem certs/server.pem certs/server.key myhost.example:certs/
 
 ## Running
 
+The server searches through [Jackett](https://github.com/Jackett/Jackett)'s Torznab API, so it needs the Jackett URL
+and API key. The key is read from `WATCHIT_JACKETT_API_KEY` to keep it out of shell history and `ps`.
+
 On the server:
 
 ```sh
-server                      # listens on 0.0.0.0:50051, reads certs from ./certs
-server --host 10.0.0.5 --port 6000 --certs-dir /etc/watchit
+export WATCHIT_JACKETT_API_KEY=...
+server --jackett-url http://localhost:9117   # listens on 0.0.0.0:50051, reads certs from ./certs
+server --jackett-url http://localhost:9117 --host 10.0.0.5 --port 6000 --certs-dir /etc/watchit
 ```
 
 On your laptop:
 
 ```sh
-client --host myhost.example                # must match a --san on the server cert
-client --host 10.0.0.5 --port 6000 --certs-dir ~/.config/watchit
+client --host myhost.example ubuntu          # host must match a --san on the server cert
+client --host 10.0.0.5 --port 6000 --certs-dir ~/.config/watchit ubuntu
 ```
 
-| Flag          | Server default | Client default |
-| ------------- | -------------- | -------------- |
-| `--host`      | `0.0.0.0`      | `localhost`    |
-| `--port`      | `50051`        | `50051`        |
-| `--certs-dir` | `certs`        | `certs`        |
+| Flag                | Server default | Client default |
+| ------------------- | -------------- | -------------- |
+| `--host`            | `0.0.0.0`      | `localhost`    |
+| `--port`            | `50051`        | `50051`        |
+| `--certs-dir`       | `certs`        | `certs`        |
+| `--jackett-url`     | required       | -              |
+| `--jackett-api-key` | required       | -              |
+| `--jackett-indexer` | `all`          | -              |
 
 ## Rotating certs
 

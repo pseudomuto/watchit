@@ -5,6 +5,7 @@ use server::certs;
 use shared::api::search::{SearchRequest, SearchServiceClient};
 use tokio::net::TcpListener;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, server::TcpIncoming};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
 
 const HOST: &str = "127.0.0.1";
 
@@ -18,14 +19,25 @@ fn write_certs(dir: &Path, sans: &[&str]) {
     certs::issue_client(&ca, "test").unwrap().save(dir, "client").unwrap();
 }
 
-/// Starts a server on an ephemeral port and returns the port.
-async fn start_server(dir: &Path) -> u16 {
+/// Starts a server on an ephemeral port, backed by a fake Jackett that
+/// returns no results. Returns the port and the fake Jackett, which must be
+/// kept alive for the duration of the test.
+async fn start_server(dir: &Path) -> (u16, MockServer) {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let jackett = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("<rss><channel></channel></rss>"))
+        .mount(&jackett)
+        .await;
+    let client = server::jackett::Client::new(&jackett.uri(), "key".into(), "all".into()).unwrap();
+
     let listener = TcpListener::bind((HOST, 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let router = server::router(server::tls_config(dir).unwrap()).unwrap();
+    let router = server::router(server::tls_config(dir).unwrap(), client).unwrap();
 
     tokio::spawn(router.serve_with_incoming(TcpIncoming::from(listener)));
-    port
+    (port, jackett)
 }
 
 async fn search(host: &str, port: u16, certs_dir: &Path) -> color_eyre::Result<()> {
@@ -38,7 +50,7 @@ async fn search(host: &str, port: u16, certs_dir: &Path) -> color_eyre::Result<(
 async fn client_with_valid_cert_can_search() {
     let dir = tempfile::tempdir().unwrap();
     write_certs(dir.path(), &[HOST]);
-    let port = start_server(dir.path()).await;
+    let (port, _jackett) = start_server(dir.path()).await;
 
     search(HOST, port, dir.path()).await.unwrap();
 }
@@ -47,7 +59,7 @@ async fn client_with_valid_cert_can_search() {
 async fn client_without_cert_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     write_certs(dir.path(), &[HOST]);
-    let port = start_server(dir.path()).await;
+    let (port, _jackett) = start_server(dir.path()).await;
     search(HOST, port, dir.path())
         .await
         .expect("valid client should succeed");
@@ -76,7 +88,7 @@ async fn client_without_cert_is_rejected() {
 async fn client_cert_from_another_ca_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     write_certs(dir.path(), &[HOST]);
-    let port = start_server(dir.path()).await;
+    let (port, _jackett) = start_server(dir.path()).await;
     search(HOST, port, dir.path())
         .await
         .expect("valid client should succeed");
@@ -100,7 +112,7 @@ async fn client_cert_from_another_ca_is_rejected() {
 async fn server_cert_for_another_host_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     write_certs(dir.path(), &["other.example"]);
-    let port = start_server(dir.path()).await;
+    let (port, _jackett) = start_server(dir.path()).await;
 
     let err = search(HOST, port, dir.path())
         .await
