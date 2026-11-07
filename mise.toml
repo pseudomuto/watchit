@@ -65,6 +65,7 @@ run = "cargo run --bin server -- --host 127.0.0.1 --certs-dir hack/certs --jacke
 
 [tasks.client]
 description = "Run the client against the local server using dev certs"
+raw = true
 depends = ["certs:dev"]
 run = "cargo run --bin client -- --certs-dir hack/certs"
 

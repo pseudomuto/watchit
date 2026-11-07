@@ -404,6 +404,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "jiff",
+ "prost-types",
  "ratatui",
  "rustls",
  "serde",

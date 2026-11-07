@@ -8,7 +8,7 @@ mutual TLS (mTLS).
 | Crate    | Binaries          | Purpose                                            |
 | -------- | ----------------- | -------------------------------------------------- |
 | `server` | `server`, `certs` | gRPC server, plus a tool for generating mTLS certs |
-| `client` | `client`          | CLI that talks to the server                       |
+| `client` | `client`          | TUI for searching through the server               |
 | `shared` | -                 | Generated protobuf/gRPC code from `proto/`         |
 
 ## Development
@@ -27,7 +27,7 @@ To run locally, start the server in one terminal and the client in another:
 ```sh
 export WATCHIT_JACKETT_API_KEY=...   # from the Jackett dashboard
 mise run server                      # listens on 127.0.0.1:50051
-mise run client ubuntu               # searches for "ubuntu"
+mise run client ubuntu               # opens the TUI and searches for "ubuntu"
 ```
 
 The server expects Jackett at `http://localhost:9117`. Set `JACKETT_URL` to point it somewhere else.
@@ -99,6 +99,21 @@ On your laptop:
 client --host myhost.example ubuntu          # host must match a --san on the server cert
 client --host 10.0.0.5 --port 6000 --certs-dir ~/.config/watchit ubuntu
 ```
+
+The client opens a TUI with a search bar and a results table. The search term is optional; leave it off to start with
+an empty search bar.
+
+| Key                 | Search bar      | Results               |
+| ------------------- | --------------- | --------------------- |
+| `Enter`             | run the search  | -                     |
+| `Tab`               | go to results   | go to search bar      |
+| `/`                 | (types `/`)      | go to search bar      |
+| `j`/`k`, arrows     | -               | move selection        |
+| `g`/`G`, Home/End   | -               | jump to top/bottom    |
+| PgUp/PgDn           | -               | move 10 rows          |
+| `Esc`               | go to results   | quit                  |
+| `q`                 | (types `q`)     | quit                  |
+| `Ctrl-C`            | quit            | quit                  |
 
 | Flag                | Server default | Client default |
 | ------------------- | -------------- | -------------- |

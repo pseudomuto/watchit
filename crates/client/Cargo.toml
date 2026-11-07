@@ -16,6 +16,7 @@ tonic.workspace = true
 shared = { path = "../shared/" }
 
 [dev-dependencies]
+prost-types.workspace = true
 rustls.workspace = true
 server = { path = "../server/" }
 tempfile.workspace = true
