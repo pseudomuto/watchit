@@ -57,3 +57,24 @@ run = "cargo clippy --all-targets --all-features -- -D warnings"
 [tasks."lint:fix"]
 description = "Run clippy and auto-fix where possible"
 run = "cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged"
+
+[tasks.server]
+description = "Run the server locally on 127.0.0.1 using dev certs"
+depends = ["certs:dev"]
+run = "cargo run --bin server -- --host 127.0.0.1 --certs-dir hack/certs"
+
+[tasks.client]
+description = "Run the client against the local server using dev certs"
+depends = ["certs:dev"]
+run = "cargo run --bin client -- --certs-dir hack/certs"
+
+[tasks."certs:dev"]
+description = "Generate dev certs in hack/certs (skips any that already exist)"
+hide = true
+run = """
+set -eu
+dir=hack/certs
+[ -f "$dir/ca.pem" ] || cargo run -q --bin certs -- --dir "$dir" ca
+[ -f "$dir/server.pem" ] || cargo run -q --bin certs -- --dir "$dir" server --san localhost --san 127.0.0.1
+[ -f "$dir/client.pem" ] || cargo run -q --bin certs -- --dir "$dir" client --name dev
+"""

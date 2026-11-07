@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+clap.workspace = true
 color-eyre.workspace = true
 ratatui.workspace = true
 jiff.workspace = true
@@ -15,6 +16,7 @@ tonic.workspace = true
 shared = { path = "../shared/" }
 
 [dev-dependencies]
+server = { path = "../server/" }
 tempfile.workspace = true
 
 [lints]
