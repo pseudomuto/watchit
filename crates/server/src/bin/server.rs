@@ -31,6 +31,14 @@ struct Cli {
     /// Jackett indexer to search, or "all" for every configured indexer.
     #[arg(long, default_value = "all")]
     jackett_indexer: String,
+
+    /// Base URL of the Deluge Web UI.
+    #[arg(long, default_value = "http://localhost:8112")]
+    deluge_url: String,
+
+    /// Deluge Web UI password.
+    #[arg(long, env = "WATCHIT_DELUGE_PASSWORD", hide_env_values = true)]
+    deluge_password: String,
 }
 
 #[tokio::main]
@@ -45,7 +53,8 @@ async fn main() -> Result<()> {
 
     let addr = SocketAddr::new(cli.host, cli.port);
     let jackett = server::jackett::Client::new(&cli.jackett_url, cli.jackett_api_key, cli.jackett_indexer)?;
-    let router = server::router(server::tls_config(&cli.certs_dir)?, jackett)?;
+    let deluge = server::deluge::Client::new(&cli.deluge_url, cli.deluge_password)?;
+    let router = server::router(server::tls_config(&cli.certs_dir)?, jackett, deluge)?;
 
     println!("listening on {addr}");
     router.serve(addr).await?;

@@ -1,12 +1,13 @@
 use std::{fs, net::Ipv6Addr, path::Path};
 
 use color_eyre::eyre::WrapErr;
-use shared::api::search::SearchServiceClient;
+use shared::api::{download::DownloadServiceClient, search::SearchServiceClient};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 #[derive(Debug)]
 pub struct Client {
     pub search: SearchServiceClient<Channel>,
+    pub download: DownloadServiceClient<Channel>,
 }
 
 impl Client {
@@ -35,7 +36,8 @@ impl Client {
             .await?;
 
         Ok(Self {
-            search: SearchServiceClient::new(channel),
+            search: SearchServiceClient::new(channel.clone()),
+            download: DownloadServiceClient::new(channel),
         })
     }
 }

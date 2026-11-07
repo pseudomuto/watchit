@@ -4,13 +4,17 @@ use ratatui::{
     DefaultTerminal,
     Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Line,
-    widgets::{Block, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Cell, Clear, Paragraph, Row, Table, TableState},
 };
-use shared::api::search::{Result as SearchResult, SearchRequest, SearchServiceClient};
-use tonic::transport::Channel;
+use shared::api::{
+    download::AddRequest,
+    search::{Result as SearchResult, SearchRequest},
+};
+
+use crate::api::Client;
 
 /// Rows moved by PageUp/PageDown.
 const PAGE_SIZE: usize = 10;
@@ -30,6 +34,7 @@ pub enum Focus {
 pub enum Action {
     None,
     Search { id: u64, term: String },
+    Add { name: String, uri: String },
     Quit,
 }
 
@@ -37,6 +42,8 @@ pub enum Action {
 enum Status {
     Idle,
     Searching,
+    Adding(String),
+    Added(String),
     Error(String),
 }
 
@@ -49,6 +56,10 @@ pub struct App {
     status: Status,
     /// Id of the latest search. Responses for older ids are dropped.
     request_id: u64,
+    /// The row waiting for confirmation while the confirm modal is open. It's
+    /// a copy, so a search finishing behind the modal can't change what gets
+    /// added.
+    confirming: Option<SearchResult>,
 }
 
 impl App {
@@ -60,12 +71,17 @@ impl App {
             table: TableState::default(),
             status: Status::Idle,
             request_id: 0,
+            confirming: None,
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Action::Quit;
+        }
+
+        if self.confirming.is_some() {
+            return self.handle_confirm_key(key);
         }
 
         match self.focus {
@@ -98,10 +114,41 @@ impl App {
             KeyCode::PageUp => self.select(self.selected().saturating_sub(PAGE_SIZE)),
             KeyCode::Char('g') | KeyCode::Home => self.select(0),
             KeyCode::Char('G') | KeyCode::End => self.select(usize::MAX),
+            KeyCode::Char('d') => self.confirming = self.table.selected().and_then(|i| self.results.get(i)).cloned(),
             _ => {}
         }
 
         Action::None
+    }
+
+    fn handle_confirm_key(&mut self, key: KeyEvent) -> Action {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => return self.start_add(),
+            KeyCode::Char('n') | KeyCode::Esc => self.confirming = None,
+            _ => {}
+        }
+
+        Action::None
+    }
+
+    fn start_add(&mut self) -> Action {
+        let Some(r) = self.confirming.take() else {
+            return Action::None;
+        };
+
+        self.status = Status::Adding(r.name.clone());
+        Action::Add {
+            name: r.name,
+            uri: r.uri,
+        }
+    }
+
+    /// Applies the response for adding the result named `name`.
+    pub fn finish_add(&mut self, name: String, result: Result<(), String>) {
+        self.status = match result {
+            Ok(()) => Status::Added(name),
+            Err(msg) => Status::Error(msg),
+        };
     }
 
     /// Applies the response for search `id`, unless a newer search has
@@ -150,13 +197,21 @@ impl App {
     }
 }
 
+/// A response from a request running in the background.
+enum Response {
+    Search {
+        id: u64,
+        result: Result<Vec<SearchResult>, String>,
+    },
+    Add {
+        name: String,
+        result: Result<(), String>,
+    },
+}
+
 /// Runs the TUI until the user quits. When `term` is given, it's prefilled
 /// and searched right away.
-pub fn run(
-    terminal: &mut DefaultTerminal,
-    search: SearchServiceClient<Channel>,
-    term: Option<String>,
-) -> color_eyre::Result<()> {
+pub fn run(terminal: &mut DefaultTerminal, client: Client, term: Option<String>) -> color_eyre::Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut app = App::new(term.unwrap_or_default());
     let mut action = app.start_search();
@@ -165,7 +220,7 @@ pub fn run(
         match action {
             Action::Quit => return Ok(()),
             Action::Search { id, term } => {
-                let mut search = search.clone();
+                let mut search = client.search.clone();
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let result = search
@@ -175,14 +230,30 @@ pub fn run(
                         .map_err(|status| format!("search failed: {}", status.message()));
 
                     // Only fails when the receiver is gone, i.e. the user quit.
-                    let _ = tx.send((id, result));
+                    let _ = tx.send(Response::Search { id, result });
+                });
+            }
+            Action::Add { name, uri } => {
+                let mut download = client.download.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let result = download
+                        .add(AddRequest { uri })
+                        .await
+                        .map(|_| ())
+                        .map_err(|status| format!("add failed: {}", status.message()));
+
+                    let _ = tx.send(Response::Add { name, result });
                 });
             }
             Action::None => {}
         }
 
-        while let Ok((id, result)) = rx.try_recv() {
-            app.finish_search(id, result);
+        while let Ok(resp) = rx.try_recv() {
+            match resp {
+                Response::Search { id, result } => app.finish_search(id, result),
+                Response::Add { name, result } => app.finish_add(name, result),
+            }
         }
 
         terminal.draw(|f| render(&mut app, f))?;
@@ -204,6 +275,10 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     render_search(app, frame, search_area);
     render_results(app, frame, results_area);
     render_status(app, frame, status_area);
+
+    if let Some(r) = &app.confirming {
+        render_confirm(r, frame, frame.area());
+    }
 }
 
 fn pane(title: String, focused: bool) -> Block<'static> {
@@ -266,17 +341,38 @@ fn render_results(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(table, area, &mut app.table);
 }
 
+/// Draws the confirm modal centered over `area`. Long names are cut off at the
+/// modal's edge.
+fn render_confirm(r: &SearchResult, frame: &mut Frame, area: Rect) {
+    let [area] = Layout::horizontal([Constraint::Percentage(80)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [area] = Layout::vertical([Constraint::Length(5)]).flex(Flex::Center).areas(area);
+
+    let text = vec![
+        Line::from(r.name.as_str()),
+        Line::default(),
+        Line::from("[y] yes  [n] no").dark_gray(),
+    ];
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(text).block(pane(" Send to Deluge? ".into(), true)), area);
+}
+
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let status = match &app.status {
         Status::Searching => Line::from("Searching...").yellow(),
+        Status::Adding(name) => Line::from(format!("Adding {name}...")).yellow(),
+        Status::Added(name) => Line::from(format!("Added {name}")).green(),
         Status::Error(msg) => Line::from(msg.as_str()).red(),
         Status::Idle if app.request_id > 0 && app.results.is_empty() => Line::from("No results"),
         Status::Idle => Line::default(),
     };
 
-    let hints = match app.focus {
-        Focus::Search => "enter search  tab results  ctrl-c quit",
-        Focus::Results => "j/k move  g/G top/bottom  / search  q quit",
+    let hints = match (&app.confirming, app.focus) {
+        (Some(_), _) => "y send  n cancel",
+        (None, Focus::Search) => "enter search  tab results  ctrl-c quit",
+        (None, Focus::Results) => "j/k move  g/G top/bottom  d deluge  / search  q quit",
     };
 
     let [status_area, hints_area] =
@@ -482,6 +578,7 @@ mod tests {
     fn result(name: &str) -> SearchResult {
         SearchResult {
             name: name.into(),
+            uri: format!("magnet:?dn={name}"),
             ..Default::default()
         }
     }
@@ -580,5 +677,162 @@ mod tests {
         assert_eq!(app.handle_key(ctrl_c), Action::Quit);
         app.focus = Focus::Results;
         assert_eq!(app.handle_key(ctrl_c), Action::Quit);
+    }
+
+    fn app_confirming_row(n: usize, row: usize) -> App {
+        let mut app = app_with_results(n);
+        app.select(row);
+        press(&mut app, KeyCode::Char('d'));
+        app
+    }
+
+    #[test]
+    fn d_opens_confirm_for_the_selected_row() {
+        let app = app_confirming_row(3, 1);
+
+        assert_eq!(app.confirming, Some(result("1")));
+    }
+
+    #[test]
+    fn d_with_no_results_does_nothing() {
+        let mut app = app_with_results(0);
+
+        assert_eq!(press(&mut app, KeyCode::Char('d')), Action::None);
+        assert_eq!(app.confirming, None);
+    }
+
+    #[test]
+    fn y_and_enter_confirm_the_add() {
+        for key in [KeyCode::Char('y'), KeyCode::Enter] {
+            let mut app = app_confirming_row(3, 2);
+
+            assert_eq!(
+                press(&mut app, key),
+                Action::Add {
+                    name: "2".into(),
+                    uri: "magnet:?dn=2".into(),
+                }
+            );
+            assert_eq!(app.confirming, None);
+            assert_eq!(app.status, Status::Adding("2".into()));
+            assert_eq!(app.focus, Focus::Results);
+        }
+    }
+
+    #[test]
+    fn n_and_esc_cancel_without_quitting() {
+        for key in [KeyCode::Char('n'), KeyCode::Esc] {
+            let mut app = app_confirming_row(3, 1);
+
+            assert_eq!(press(&mut app, key), Action::None);
+            assert_eq!(app.confirming, None);
+            assert_eq!(app.focus, Focus::Results);
+            assert_eq!(app.status, Status::Idle);
+        }
+    }
+
+    #[test]
+    fn other_keys_are_ignored_while_confirming() {
+        let mut app = app_confirming_row(3, 1);
+
+        for key in [
+            KeyCode::Char('q'),
+            KeyCode::Char('j'),
+            KeyCode::Char('/'),
+            KeyCode::Tab,
+            KeyCode::Char('d'),
+        ] {
+            assert_eq!(press(&mut app, key), Action::None, "{key:?}");
+        }
+        assert_eq!(app.confirming, Some(result("1")));
+        assert_eq!(app.table.selected(), Some(1));
+        assert_eq!(app.focus, Focus::Results);
+    }
+
+    #[test]
+    fn ctrl_c_quits_while_confirming() {
+        let mut app = app_confirming_row(3, 1);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+        assert_eq!(app.handle_key(ctrl_c), Action::Quit);
+    }
+
+    #[test]
+    fn search_finishing_while_confirming_keeps_the_picked_row() {
+        let mut app = app_confirming_row(3, 1);
+        let id = app.request_id;
+
+        app.finish_search(id, Ok(vec![result("new")]));
+        assert_eq!(app.confirming, Some(result("1")));
+
+        assert_eq!(
+            press(&mut app, KeyCode::Char('y')),
+            Action::Add {
+                name: "1".into(),
+                uri: "magnet:?dn=1".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn finish_add_reports_the_outcome() {
+        let mut app = app_with_results(1);
+
+        app.finish_add("ubuntu".into(), Ok(()));
+        assert_eq!(app.status, Status::Added("ubuntu".into()));
+
+        app.finish_add("ubuntu".into(), Err("add failed: already in session".into()));
+        assert_eq!(app.status, Status::Error("add failed: already in session".into()));
+    }
+
+    #[test]
+    fn render_shows_add_status() {
+        let mut app = app_with_results(1);
+
+        app.status = Status::Adding("ubuntu.iso".into());
+        assert!(draw(&mut app).contains("Adding ubuntu.iso..."));
+
+        app.finish_add("ubuntu.iso".into(), Ok(()));
+        assert!(draw(&mut app).contains("Added ubuntu.iso"));
+    }
+
+    #[test]
+    fn render_shows_confirm_modal_with_the_name() {
+        let mut app = app_confirming_row(3, 1);
+        app.confirming = Some(result("ubuntu-24.04-desktop-amd64.iso"));
+
+        let screen = draw(&mut app);
+        for want in [
+            "Send to Deluge?",
+            "ubuntu-24.04-desktop-amd64.iso",
+            "[y] yes  [n] no",
+            "y send  n cancel",
+        ] {
+            assert!(screen.contains(want), "missing {want:?} in:\n{screen}");
+        }
+    }
+
+    #[test]
+    fn render_hides_confirm_modal_after_cancel() {
+        let mut app = app_confirming_row(3, 1);
+        press(&mut app, KeyCode::Esc);
+
+        let screen = draw(&mut app);
+        assert!(!screen.contains("Send to Deluge?"), "modal still shown:\n{screen}");
+        assert!(screen.contains("d deluge"), "missing results hint:\n{screen}");
+    }
+
+    #[test]
+    fn render_truncates_long_names_in_confirm_modal() {
+        let mut app = app_confirming_row(3, 1);
+        app.confirming = Some(result(&"x".repeat(500)));
+
+        let screen = draw(&mut app);
+        assert!(screen.contains("Send to Deluge?"), "missing modal in:\n{screen}");
+        assert!(screen.contains(&"x".repeat(40)), "missing name in:\n{screen}");
+        assert!(
+            screen.contains("[y] yes  [n] no"),
+            "name wrapped over the hints in:\n{screen}"
+        );
     }
 }

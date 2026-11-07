@@ -36,5 +36,5 @@ async fn main() -> Result<()> {
     }
 
     let client = Client::connect(&cli.host, cli.port, &cli.certs_dir).await?;
-    ratatui::run(|terminal| tui::run(terminal, client.search, cli.term))
+    ratatui::run(|terminal| tui::run(terminal, client, cli.term))
 }

@@ -26,11 +26,13 @@ To run locally, start the server in one terminal and the client in another:
 
 ```sh
 export WATCHIT_JACKETT_API_KEY=...   # from the Jackett dashboard
+export WATCHIT_DELUGE_PASSWORD=...   # Deluge Web UI password
 mise run server                      # listens on 127.0.0.1:50051
 mise run client ubuntu               # opens the TUI and searches for "ubuntu"
 ```
 
-The server expects Jackett at `http://localhost:9117`. Set `JACKETT_URL` to point it somewhere else.
+The server expects Jackett at `http://localhost:9117` and the Deluge Web UI at `http://localhost:8112`. Set
+`JACKETT_URL` or `DELUGE_URL` to point it somewhere else.
 
 Both tasks first run `mise run certs:dev`, which generates dev certs in `hack/certs` (gitignored) for `localhost` and
 `127.0.0.1`. Existing certs are left alone. To regenerate them, for example after they expire, delete the directory.
@@ -82,13 +84,15 @@ scp certs/ca.pem certs/server.pem certs/server.key myhost.example:certs/
 
 ## Running
 
-The server searches through [Jackett](https://github.com/Jackett/Jackett)'s Torznab API, so it needs the Jackett URL
-and API key. The key is read from `WATCHIT_JACKETT_API_KEY` to keep it out of shell history and `ps`.
+The server searches through [Jackett](https://github.com/Jackett/Jackett)'s Torznab API and adds torrents through the
+[Deluge](https://deluge-torrent.org) Web UI. The Jackett API key is read from `WATCHIT_JACKETT_API_KEY` and the Deluge
+password from `WATCHIT_DELUGE_PASSWORD`, to keep them out of shell history and `ps`.
 
 On the server:
 
 ```sh
 export WATCHIT_JACKETT_API_KEY=...
+export WATCHIT_DELUGE_PASSWORD=...
 server --jackett-url http://localhost:9117   # listens on 0.0.0.0:50051, reads certs from ./certs
 server --jackett-url http://localhost:9117 --host 10.0.0.5 --port 6000 --certs-dir /etc/watchit
 ```
@@ -110,19 +114,25 @@ an empty search bar.
 | `/`                 | (types `/`)      | go to search bar      |
 | `j`/`k`, arrows     | -               | move selection        |
 | `g`/`G`, Home/End   | -               | jump to top/bottom    |
+| `d`                 | (types `d`)     | send to Deluge        |
 | PgUp/PgDn           | -               | move 10 rows          |
 | `Esc`               | go to results   | quit                  |
 | `q`                 | (types `q`)     | quit                  |
 | `Ctrl-C`            | quit            | quit                  |
 
-| Flag                | Server default | Client default |
-| ------------------- | -------------- | -------------- |
-| `--host`            | `0.0.0.0`      | `localhost`    |
-| `--port`            | `50051`        | `50051`        |
-| `--certs-dir`       | `certs`        | `certs`        |
-| `--jackett-url`     | required       | -              |
-| `--jackett-api-key` | required       | -              |
-| `--jackett-indexer` | `all`          | -              |
+`d` asks before sending. In that prompt, `y`/`Enter` sends the torrent and `n`/`Esc` cancels. Other keys are
+ignored.
+
+| Flag                | Server default          | Client default |
+| ------------------- | ----------------------- | -------------- |
+| `--host`            | `0.0.0.0`               | `localhost`    |
+| `--port`            | `50051`                 | `50051`        |
+| `--certs-dir`       | `certs`                 | `certs`        |
+| `--jackett-url`     | required                | -              |
+| `--jackett-api-key` | required                | -              |
+| `--jackett-indexer` | `all`                   | -              |
+| `--deluge-url`      | `http://localhost:8112` | -              |
+| `--deluge-password` | required                | -              |
 
 ## Rotating certs
 

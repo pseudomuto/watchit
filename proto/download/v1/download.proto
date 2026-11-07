@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package download.v1;
+
+service DownloadService {
+  rpc Add(AddRequest) returns (AddResponse) {}
+}
+
+message AddRequest {
+  string uri = 1;
+}
+
+message AddResponse {}

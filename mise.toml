@@ -59,9 +59,9 @@ description = "Run clippy and auto-fix where possible"
 run = "cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged"
 
 [tasks.server]
-description = "Run the server locally on 127.0.0.1 using dev certs (needs WATCHIT_JACKETT_API_KEY)"
+description = "Run the server locally on 127.0.0.1 using dev certs (needs WATCHIT_JACKETT_API_KEY and WATCHIT_DELUGE_PASSWORD)"
 depends = ["certs:dev"]
-run = "cargo run --bin server -- --host 127.0.0.1 --certs-dir hack/certs --jackett-url ${JACKETT_URL:-http://localhost:9117}"
+run = "cargo run --bin server -- --host 127.0.0.1 --certs-dir hack/certs --jackett-url ${JACKETT_URL:-http://localhost:9117} --deluge-url ${DELUGE_URL:-http://localhost:8112}"
 
 [tasks.client]
 description = "Run the client against the local server using dev certs"

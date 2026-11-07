@@ -2,7 +2,10 @@ use std::{fs, path::Path};
 
 use client::api::Client;
 use server::certs;
-use shared::api::search::{SearchRequest, SearchServiceClient};
+use shared::api::{
+    download::AddRequest,
+    search::{SearchRequest, SearchServiceClient},
+};
 use tokio::net::TcpListener;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, server::TcpIncoming};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
@@ -32,9 +35,12 @@ async fn start_server(dir: &Path) -> (u16, MockServer) {
         .await;
     let client = server::jackett::Client::new(&jackett.uri(), "key".into(), "all".into()).unwrap();
 
+    // Nothing listens here, so every add fails with Unavailable.
+    let deluge = server::deluge::Client::new("http://127.0.0.1:1", "pw".into()).unwrap();
+
     let listener = TcpListener::bind((HOST, 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let router = server::router(server::tls_config(dir).unwrap(), client).unwrap();
+    let router = server::router(server::tls_config(dir).unwrap(), client, deluge).unwrap();
 
     tokio::spawn(router.serve_with_incoming(TcpIncoming::from(listener)));
     (port, jackett)
@@ -53,6 +59,26 @@ async fn client_with_valid_cert_can_search() {
     let (port, _jackett) = start_server(dir.path()).await;
 
     search(HOST, port, dir.path()).await.unwrap();
+}
+
+#[tokio::test]
+async fn client_with_valid_cert_reaches_the_download_service() {
+    let dir = tempfile::tempdir().unwrap();
+    write_certs(dir.path(), &[HOST]);
+    let (port, _jackett) = start_server(dir.path()).await;
+
+    let mut client = Client::connect(HOST, port, dir.path()).await.unwrap();
+    let err = client
+        .download
+        .add(AddRequest {
+            uri: "magnet:?xt=urn:btih:abc".into(),
+        })
+        .await
+        .unwrap_err();
+
+    // Unavailable comes from the service failing to reach Deluge. An
+    // unregistered service would return Unimplemented instead.
+    assert_eq!(err.code(), tonic::Code::Unavailable, "{err:?}");
 }
 
 #[tokio::test]
