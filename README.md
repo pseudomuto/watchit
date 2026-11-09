@@ -19,7 +19,7 @@ Tooling (Rust, `protoc`) is managed by [mise](https://mise.jdx.dev).
 mise install          # install tools
 mise run build        # debug build
 mise run test         # run tests
-mise run test:ci      # fmt check, clippy, tests, and build
+mise run test:ci      # fmt check, clippy, unused deps, tests, and build
 ```
 
 To run locally, start the server in one terminal and the client in another:

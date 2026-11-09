@@ -2,6 +2,11 @@
 
 lockfile_version = 3
 
+[[tools."cargo:cargo-shear"]]
+version = "1.14.0"
+backend = "cargo:cargo-shear"
+specifiers = ["latest"]
+
 [[tools.protoc]]
 version = "35.1"
 backend = "aqua:protocolbuffers/protobuf/protoc"
