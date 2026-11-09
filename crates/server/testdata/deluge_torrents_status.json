@@ -1,0 +1,60 @@
+{
+  "id": 1,
+  "error": null,
+  "result": {
+    "aaaa000000000000000000000000000000000001": {
+      "name": "fedora-41.iso",
+      "state": "Seeding",
+      "progress": 100.0,
+      "total_size": 2362232012,
+      "download_payload_rate": 0,
+      "upload_payload_rate": 81920,
+      "eta": 0
+    },
+    "aaaa000000000000000000000000000000000002": {
+      "name": "ubuntu-24.04.iso",
+      "state": "Downloading",
+      "progress": 62.5,
+      "total_size": 6114656256,
+      "download_payload_rate": 4404019,
+      "upload_payload_rate": 122880,
+      "eta": 180
+    },
+    "aaaa000000000000000000000000000000000003": {
+      "name": "debian-12.iso",
+      "state": "Queued",
+      "progress": 0.0,
+      "total_size": 3328599654,
+      "download_payload_rate": 0,
+      "upload_payload_rate": 0,
+      "eta": 0
+    },
+    "aaaa000000000000000000000000000000000004": {
+      "name": "arch.iso",
+      "state": "Paused",
+      "progress": 40.0,
+      "total_size": 1181116006,
+      "download_payload_rate": 0,
+      "upload_payload_rate": 0,
+      "eta": 0
+    },
+    "aaaa000000000000000000000000000000000005": {
+      "name": "mint.iso",
+      "state": "Moving",
+      "progress": 100.00001,
+      "total_size": 2899102924,
+      "download_payload_rate": 0,
+      "upload_payload_rate": 0,
+      "eta": 0
+    },
+    "aaaa000000000000000000000000000000000006": {
+      "name": "alpine.iso",
+      "state": "Downloading",
+      "progress": 10.0,
+      "total_size": 209715200,
+      "download_payload_rate": 1024,
+      "upload_payload_rate": 0,
+      "eta": -1
+    }
+  }
+}

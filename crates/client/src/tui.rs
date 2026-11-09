@@ -1,4 +1,7 @@
-use std::{sync::mpsc, time::Duration};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use ratatui::{
     DefaultTerminal,
@@ -7,10 +10,10 @@ use ratatui::{
     layout::{Constraint, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Line,
-    widgets::{Block, Cell, Clear, Paragraph, Row, Table, TableState},
+    widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Tabs},
 };
 use shared::api::{
-    download::AddRequest,
+    download::{AddRequest, ListRequest, Torrent, torrent::State},
     search::{Result as SearchResult, SearchRequest},
 };
 
@@ -22,7 +25,17 @@ const PAGE_SIZE: usize = 10;
 /// How long to wait for a key press before checking for search results.
 const TICK: Duration = Duration::from_millis(50);
 
-/// Which pane receives key presses.
+/// How often the Downloads tab refreshes while it's open.
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Which tab is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Search,
+    Downloads,
+}
+
+/// Which pane on the Search tab receives key presses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Search,
@@ -35,6 +48,7 @@ pub enum Action {
     None,
     Search { id: u64, term: String },
     Add { name: String, uri: String },
+    List,
     Quit,
 }
 
@@ -42,9 +56,13 @@ pub enum Action {
 enum Status {
     Idle,
     Searching,
+    /// The first List since starting is running.
+    Fetching,
     Adding(String),
     Added(String),
     Error(String),
+    /// The last List failed. Cleared by the next one that succeeds.
+    ListFailed(String),
 }
 
 #[derive(Debug)]
@@ -60,6 +78,13 @@ pub struct App {
     /// a copy, so a search finishing behind the modal can't change what gets
     /// added.
     confirming: Option<SearchResult>,
+    tab: Tab,
+    downloads: Vec<Torrent>,
+    downloads_table: TableState,
+    /// True while a List request is running, so polls don't pile up.
+    listing: bool,
+    /// When the last List finished. `None` until the first one does.
+    listed_at: Option<Instant>,
 }
 
 impl App {
@@ -72,6 +97,11 @@ impl App {
             status: Status::Idle,
             request_id: 0,
             confirming: None,
+            tab: Tab::Search,
+            downloads: Vec::new(),
+            downloads_table: TableState::default(),
+            listing: false,
+            listed_at: None,
         }
     }
 
@@ -84,9 +114,14 @@ impl App {
             return self.handle_confirm_key(key);
         }
 
-        match self.focus {
-            Focus::Search => self.handle_search_key(key),
-            Focus::Results => self.handle_results_key(key),
+        if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            return self.switch_tab();
+        }
+
+        match (self.tab, self.focus) {
+            (Tab::Search, Focus::Search) => self.handle_search_key(key),
+            (Tab::Search, Focus::Results) => self.handle_results_key(key),
+            (Tab::Downloads, _) => self.handle_downloads_key(key),
         }
     }
 
@@ -96,7 +131,7 @@ impl App {
             KeyCode::Backspace => {
                 self.query.pop();
             }
-            KeyCode::Tab | KeyCode::Esc => self.focus = Focus::Results,
+            KeyCode::Esc => self.focus = Focus::Results,
             KeyCode::Enter => return self.start_search(),
             _ => {}
         }
@@ -107,7 +142,7 @@ impl App {
     fn handle_results_key(&mut self, key: KeyEvent) -> Action {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Action::Quit,
-            KeyCode::Char('/') | KeyCode::Tab => self.focus = Focus::Search,
+            KeyCode::Char('/') => self.focus = Focus::Search,
             KeyCode::Char('j') | KeyCode::Down => self.select(self.selected() + 1),
             KeyCode::Char('k') | KeyCode::Up => self.select(self.selected().saturating_sub(1)),
             KeyCode::PageDown => self.select(self.selected() + PAGE_SIZE),
@@ -129,6 +164,106 @@ impl App {
         }
 
         Action::None
+    }
+
+    fn handle_downloads_key(&mut self, key: KeyEvent) -> Action {
+        let selected = self.downloads_table.selected().unwrap_or(0);
+
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return Action::Quit,
+            KeyCode::Char('j') | KeyCode::Down => self.select_download(selected + 1),
+            KeyCode::Char('k') | KeyCode::Up => self.select_download(selected.saturating_sub(1)),
+            KeyCode::PageDown => self.select_download(selected + PAGE_SIZE),
+            KeyCode::PageUp => self.select_download(selected.saturating_sub(PAGE_SIZE)),
+            KeyCode::Char('g') | KeyCode::Home => self.select_download(0),
+            KeyCode::Char('G') | KeyCode::End => self.select_download(usize::MAX),
+            _ => {}
+        }
+
+        Action::None
+    }
+
+    /// Toggles between the tabs. Opening Downloads lists right away.
+    fn switch_tab(&mut self) -> Action {
+        self.tab = match self.tab {
+            Tab::Search => Tab::Downloads,
+            Tab::Downloads => Tab::Search,
+        };
+
+        match self.tab {
+            Tab::Downloads => self.start_list(),
+            Tab::Search => Action::None,
+        }
+    }
+
+    /// Returns `Action::List` when the Downloads tab is open and the last List
+    /// finished at least `POLL_INTERVAL` before `now`.
+    pub fn tick(&mut self, now: Instant) -> Action {
+        let due = self
+            .listed_at
+            .is_none_or(|at| now.saturating_duration_since(at) >= POLL_INTERVAL);
+
+        match self.tab == Tab::Downloads && due {
+            true => self.start_list(),
+            false => Action::None,
+        }
+    }
+
+    /// Starts a List unless one is already running.
+    fn start_list(&mut self) -> Action {
+        if self.listing {
+            return Action::None;
+        }
+
+        self.listing = true;
+        if self.listed_at.is_none() && self.list_owns_status() {
+            self.status = Status::Fetching;
+        }
+
+        Action::List
+    }
+
+    /// Applies a List response that finished at `now`. The selection stays on
+    /// the same torrent when rows move. Errors keep the previous rows.
+    pub fn finish_list(&mut self, now: Instant, result: Result<Vec<Torrent>, String>) {
+        self.listing = false;
+        self.listed_at = Some(now);
+
+        match result {
+            Ok(torrents) => {
+                let selected = self.downloads_table.selected();
+                let id = selected.and_then(|i| self.downloads.get(i)).map(|t| t.id.clone());
+                let row = id
+                    .and_then(|id| torrents.iter().position(|t| t.id == id))
+                    .or(selected)
+                    .unwrap_or(0);
+
+                self.downloads = torrents;
+                self.select_download(row);
+
+                if matches!(self.status, Status::Fetching | Status::ListFailed(_)) {
+                    self.status = Status::Idle;
+                }
+            }
+            Err(msg) if self.list_owns_status() => self.status = Status::ListFailed(msg),
+            Err(_) => {}
+        }
+    }
+
+    /// Whether List progress may replace the current status. Searches, adds,
+    /// and their errors stay on screen until they're done or replaced.
+    fn list_owns_status(&self) -> bool {
+        matches!(
+            self.status,
+            Status::Idle | Status::Fetching | Status::ListFailed(_) | Status::Added(_)
+        )
+    }
+
+    /// Selects download row `i`, clamped to the last row. Selects nothing when
+    /// there are no torrents.
+    fn select_download(&mut self, i: usize) {
+        let row = self.downloads.len().checked_sub(1).map(|last| i.min(last));
+        self.downloads_table.select(row);
     }
 
     fn start_add(&mut self) -> Action {
@@ -207,6 +342,9 @@ enum Response {
         name: String,
         result: Result<(), String>,
     },
+    List {
+        result: Result<Vec<Torrent>, String>,
+    },
 }
 
 /// Runs the TUI until the user quits. When `term` is given, it's prefilled
@@ -246,6 +384,19 @@ pub fn run(terminal: &mut DefaultTerminal, client: Client, term: Option<String>)
                     let _ = tx.send(Response::Add { name, result });
                 });
             }
+            Action::List => {
+                let mut download = client.download.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let result = download
+                        .list(ListRequest {})
+                        .await
+                        .map(|resp| resp.into_inner().torrents)
+                        .map_err(|status| format!("list failed: {}", status.message()));
+
+                    let _ = tx.send(Response::List { result });
+                });
+            }
             Action::None => {}
         }
 
@@ -253,6 +404,7 @@ pub fn run(terminal: &mut DefaultTerminal, client: Client, term: Option<String>)
             match resp {
                 Response::Search { id, result } => app.finish_search(id, result),
                 Response::Add { name, result } => app.finish_add(name, result),
+                Response::List { result } => app.finish_list(Instant::now(), result),
             }
         }
 
@@ -265,20 +417,45 @@ pub fn run(terminal: &mut DefaultTerminal, client: Client, term: Option<String>)
         {
             action = app.handle_key(key);
         }
+
+        if action == Action::None {
+            action = app.tick(Instant::now());
+        }
     }
 }
 
 pub fn render(app: &mut App, frame: &mut Frame) {
-    let [search_area, results_area, status_area] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    let [tabs_area, body_area, status_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
 
-    render_search(app, frame, search_area);
-    render_results(app, frame, results_area);
+    render_tabs(app, frame, tabs_area);
+    match app.tab {
+        Tab::Search => {
+            let [search_area, results_area] =
+                Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(body_area);
+            render_search(app, frame, search_area);
+            render_results(app, frame, results_area);
+        }
+        Tab::Downloads => render_downloads(app, frame, body_area),
+    }
     render_status(app, frame, status_area);
 
     if let Some(r) = &app.confirming {
         render_confirm(r, frame, frame.area());
     }
+}
+
+fn render_tabs(app: &App, frame: &mut Frame, area: Rect) {
+    let selected = match app.tab {
+        Tab::Search => 0,
+        Tab::Downloads => 1,
+    };
+
+    let tabs = Tabs::new(["Search", "Downloads"])
+        .select(selected)
+        .style(Style::new().fg(Color::DarkGray))
+        .highlight_style(Style::new().fg(Color::Yellow).bold());
+    frame.render_widget(tabs, area);
 }
 
 fn pane(title: String, focused: bool) -> Block<'static> {
@@ -287,7 +464,10 @@ fn pane(title: String, focused: bool) -> Block<'static> {
         false => Style::new().fg(Color::DarkGray),
     };
 
-    Block::bordered().title(title).border_style(style)
+    Block::bordered()
+        .title(title)
+        .border_style(style)
+        .padding(Padding::horizontal(1))
 }
 
 fn render_search(app: &App, frame: &mut Frame, area: Rect) {
@@ -298,8 +478,9 @@ fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     );
 
     if focused {
-        let x = area.x + 1 + app.query.chars().count() as u16;
-        frame.set_cursor_position((x.min(area.right().saturating_sub(2)), area.y + 1));
+        // Skip the border and the padding.
+        let x = area.x + 2 + app.query.chars().count() as u16;
+        frame.set_cursor_position((x.min(area.right().saturating_sub(3)), area.y + 1));
     }
 }
 
@@ -341,6 +522,64 @@ fn render_results(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(table, area, &mut app.table);
 }
 
+fn render_downloads(app: &mut App, frame: &mut Frame, area: Rect) {
+    let right = |s: String| Cell::from(Line::from(s).right_aligned());
+    let header = Row::new([
+        Cell::from("Name"),
+        Cell::from("State"),
+        Cell::from("Progress"),
+        right("Size".into()),
+        right("Down".into()),
+        right("Up".into()),
+        right("ETA".into()),
+    ])
+    .style(Style::new().bold());
+
+    let rows = app.downloads.iter().map(|t| {
+        let (label, color) = state_style(t.state());
+        Row::new([
+            Cell::from(t.name.clone()),
+            Cell::from(label).style(Style::new().fg(color)),
+            Cell::from(progress_bar(t.progress)),
+            right(format_size(t.size_bytes)),
+            right(format_rate(t.download_rate)),
+            right(format_rate(t.upload_rate)),
+            right(format_eta(t.eta_seconds)),
+        ])
+    });
+
+    let widths = [
+        Constraint::Fill(1),
+        Constraint::Length(11),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(12),
+        Constraint::Length(12),
+        Constraint::Length(7),
+    ];
+
+    let title = format!(" Downloads ({}) ", app.downloads.len());
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(pane(title, true))
+        .row_highlight_style(Style::new().reversed());
+
+    frame.render_stateful_widget(table, area, &mut app.downloads_table);
+}
+
+/// The label and color for a torrent's state.
+fn state_style(state: State) -> (&'static str, Color) {
+    match state {
+        State::Downloading => ("Downloading", Color::Green),
+        State::Queued => ("Queued", Color::Yellow),
+        State::Checking => ("Checking", Color::Yellow),
+        State::Error => ("Error", Color::Red),
+        State::Paused => ("Paused", Color::DarkGray),
+        State::Seeding => ("Seeding", Color::DarkGray),
+        State::Unspecified => ("Unknown", Color::DarkGray),
+    }
+}
+
 /// Draws the confirm modal centered over `area`. Long names are cut off at the
 /// modal's edge.
 fn render_confirm(r: &SearchResult, frame: &mut Frame, area: Rect) {
@@ -362,17 +601,22 @@ fn render_confirm(r: &SearchResult, frame: &mut Frame, area: Rect) {
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let status = match &app.status {
         Status::Searching => Line::from("Searching...").yellow(),
+        Status::Fetching => Line::from("Fetching...").yellow(),
         Status::Adding(name) => Line::from(format!("Adding {name}...")).yellow(),
         Status::Added(name) => Line::from(format!("Added {name}")).green(),
         Status::Error(msg) => Line::from(msg.as_str()).red(),
-        Status::Idle if app.request_id > 0 && app.results.is_empty() => Line::from("No results"),
+        Status::ListFailed(msg) => Line::from(msg.as_str()).red(),
+        Status::Idle if app.tab == Tab::Search && app.request_id > 0 && app.results.is_empty() => {
+            Line::from("No results")
+        }
         Status::Idle => Line::default(),
     };
 
-    let hints = match (&app.confirming, app.focus) {
-        (Some(_), _) => "y send  n cancel",
-        (None, Focus::Search) => "enter search  tab results  ctrl-c quit",
-        (None, Focus::Results) => "j/k move  g/G top/bottom  d deluge  / search  q quit",
+    let hints = match (&app.confirming, app.tab, app.focus) {
+        (Some(_), _, _) => "y send  n cancel",
+        (None, Tab::Search, Focus::Search) => "enter search  esc results  tab downloads  ctrl-c quit",
+        (None, Tab::Search, Focus::Results) => "j/k move  g/G top/bottom  d deluge  / search  tab downloads  q quit",
+        (None, Tab::Downloads, _) => "j/k move  g/G top/bottom  tab search  q quit",
     };
 
     let [status_area, hints_area] =
@@ -397,6 +641,38 @@ fn format_size(bytes: i64) -> String {
     }
 }
 
+/// Draws `progress` (0 to 100) as a 5-cell bar plus a percentage. Values
+/// outside that range, and NaN, are clamped.
+fn progress_bar(progress: f64) -> String {
+    let pct = match progress.is_nan() {
+        true => 0.0,
+        false => progress.clamp(0.0, 100.0),
+    };
+    let filled = (pct / 20.0).round() as usize;
+
+    format!("{}{} {pct:>3.0}%", "█".repeat(filled), "░".repeat(5 - filled))
+}
+
+/// Formats a rate in bytes/sec, or `-` when nothing is moving.
+fn format_rate(bytes_per_sec: i64) -> String {
+    match bytes_per_sec {
+        r if r <= 0 => "-".into(),
+        r => format!("{}/s", format_size(r)),
+    }
+}
+
+/// Formats an ETA in seconds as e.g. `45s`, `3m`, `2h10m` or `1d4h`, or `-`
+/// when it's unknown.
+fn format_eta(secs: i64) -> String {
+    match secs {
+        s if s <= 0 => "-".into(),
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h{}m", s / 3600, s % 3600 / 60),
+        s => format!("{}d{}h", s / 86_400, s % 86_400 / 3600),
+    }
+}
+
 /// Formats `created_at` as a UTC date, or `-` when it's missing or invalid.
 fn format_date(r: &SearchResult) -> String {
     r.created_at
@@ -417,6 +693,35 @@ mod tests {
         assert_eq!(format_size(512), "512 B");
         assert_eq!(format_size(1536), "1.5 KiB");
         assert_eq!(format_size(6_114_656_256), "5.7 GiB");
+    }
+
+    #[test]
+    fn progress_bar_clamps() {
+        assert_eq!(progress_bar(0.0), "░░░░░   0%");
+        assert_eq!(progress_bar(62.0), "███░░  62%");
+        assert_eq!(progress_bar(100.0), "█████ 100%");
+        assert_eq!(progress_bar(100.00001), "█████ 100%");
+        assert_eq!(progress_bar(150.0), "█████ 100%");
+        assert_eq!(progress_bar(-5.0), "░░░░░   0%");
+        assert_eq!(progress_bar(f64::NAN), "░░░░░   0%");
+    }
+
+    #[test]
+    fn format_rate_uses_binary_units_per_second() {
+        assert_eq!(format_rate(0), "-");
+        assert_eq!(format_rate(-1), "-");
+        assert_eq!(format_rate(1536), "1.5 KiB/s");
+        assert_eq!(format_rate(4_404_019), "4.2 MiB/s");
+    }
+
+    #[test]
+    fn format_eta_is_compact() {
+        assert_eq!(format_eta(0), "-");
+        assert_eq!(format_eta(-1), "-");
+        assert_eq!(format_eta(45), "45s");
+        assert_eq!(format_eta(180), "3m");
+        assert_eq!(format_eta(7800), "2h10m");
+        assert_eq!(format_eta(100_800), "1d4h");
     }
 
     #[test]
@@ -495,6 +800,109 @@ mod tests {
     }
 
     #[test]
+    fn render_shows_downloads() {
+        let mut t = Torrent {
+            id: "a".into(),
+            name: "ubuntu-24.04.iso".into(),
+            progress: 62.0,
+            size_bytes: 6_114_656_256,
+            download_rate: 4_404_019,
+            upload_rate: 122_880,
+            eta_seconds: 180,
+            ..Default::default()
+        };
+        t.set_state(State::Downloading);
+        let mut app = downloads_app(vec![t], Instant::now());
+
+        let screen = draw(&mut app);
+        for want in [
+            "Search",
+            "Downloads (1)",
+            "Name",
+            "State",
+            "Progress",
+            "ETA",
+            "ubuntu-24.04.iso",
+            "Downloading",
+            "███░░  62%",
+            "5.7 GiB",
+            "4.2 MiB/s",
+            "120.0 KiB/s",
+            "3m",
+            "tab search",
+        ] {
+            assert!(screen.contains(want), "missing {want:?} in:\n{screen}");
+        }
+        assert!(!screen.contains("Results"), "search body shown in:\n{screen}");
+    }
+
+    #[test]
+    fn render_pads_panels() {
+        let mut app = App::new("ubuntu".into());
+
+        let screen = draw(&mut app);
+        assert!(screen.contains("│ ubuntu"), "missing padding in:\n{screen}");
+    }
+
+    #[test]
+    fn render_puts_the_cursor_after_the_query() {
+        let mut app = App::new("ubuntu".into());
+        let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
+        terminal.draw(|f| render(&mut app, f)).unwrap();
+
+        // 1 for the border, 1 for the padding, then the query.
+        let pos = terminal.get_cursor_position().unwrap();
+        assert_eq!((pos.x, pos.y), (2 + 6, 2));
+    }
+
+    #[test]
+    fn render_shows_tabs_on_the_search_tab() {
+        let mut app = App::new(String::new());
+
+        let screen = draw(&mut app);
+        assert!(screen.contains("Search"), "missing tab in:\n{screen}");
+        assert!(screen.contains("Downloads"), "missing tab in:\n{screen}");
+        assert!(screen.contains("tab downloads"), "missing hint in:\n{screen}");
+    }
+
+    #[test]
+    fn render_shows_fetching_until_the_first_list() {
+        let mut app = App::new(String::new());
+        press(&mut app, KeyCode::Tab);
+        assert!(draw(&mut app).contains("Fetching..."));
+
+        app.finish_list(Instant::now(), Ok(vec![torrent("a")]));
+        assert!(!draw(&mut app).contains("Fetching..."));
+    }
+
+    #[test]
+    fn render_hides_no_results_on_downloads_tab() {
+        let mut app = app_with_results(0);
+        assert!(draw(&mut app).contains("No results"));
+
+        press(&mut app, KeyCode::Tab);
+        app.finish_list(Instant::now(), Ok(vec![]));
+
+        let screen = draw(&mut app);
+        assert!(!screen.contains("No results"), "search status leaked in:\n{screen}");
+        assert!(screen.contains("Downloads (0)"), "missing title in:\n{screen}");
+    }
+
+    #[test]
+    fn render_shows_list_errors() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![torrent("a")], now);
+        app.finish_list(now, Err("list failed: deluge is down".into()));
+
+        let screen = draw(&mut app);
+        assert!(
+            screen.contains("list failed: deluge is down"),
+            "missing error in:\n{screen}"
+        );
+        assert!(screen.contains("a.iso"), "rows dropped in:\n{screen}");
+    }
+
+    #[test]
     fn render_shows_status() {
         let mut app = App::new("ubuntu".into());
         let Action::Search { id, .. } = app.start_search() else {
@@ -553,16 +961,31 @@ mod tests {
     }
 
     #[test]
-    fn tab_and_slash_switch_focus() {
-        let mut app = App::new(String::new());
+    fn tab_switches_tabs_and_keeps_the_query() {
+        let mut app = App::new("ubu".into());
+
+        assert_eq!(press(&mut app, KeyCode::Tab), Action::List);
+        assert_eq!(app.tab, Tab::Downloads);
+
+        assert_eq!(press(&mut app, KeyCode::BackTab), Action::None);
+        assert_eq!(app.tab, Tab::Search);
+        assert_eq!(app.query, "ubu");
+        assert_eq!(app.focus, Focus::Search);
+
+        // Also from the results pane.
+        press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Tab);
+        assert_eq!(app.tab, Tab::Downloads);
+    }
+
+    #[test]
+    fn esc_and_slash_switch_focus() {
+        let mut app = App::new(String::new());
+        press(&mut app, KeyCode::Esc);
         assert_eq!(app.focus, Focus::Results);
 
         press(&mut app, KeyCode::Char('/'));
         assert_eq!(app.focus, Focus::Search);
-
-        press(&mut app, KeyCode::Esc);
-        assert_eq!(app.focus, Focus::Results);
     }
 
     #[test]
@@ -571,8 +994,175 @@ mod tests {
         assert_eq!(press(&mut app, KeyCode::Char('q')), Action::None);
         assert_eq!(app.query, "q");
 
-        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Esc);
         assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
+    }
+
+    fn torrent(id: &str) -> Torrent {
+        Torrent {
+            id: id.into(),
+            name: format!("{id}.iso"),
+            ..Default::default()
+        }
+    }
+
+    /// An app on the Downloads tab whose first List finished at `now`.
+    fn downloads_app(torrents: Vec<Torrent>, now: Instant) -> App {
+        let mut app = App::new(String::new());
+        assert_eq!(press(&mut app, KeyCode::Tab), Action::List);
+        app.finish_list(now, Ok(torrents));
+        app
+    }
+
+    #[test]
+    fn tick_lists_only_on_the_downloads_tab_and_never_overlaps() {
+        let mut app = App::new(String::new());
+        let now = Instant::now();
+        assert_eq!(app.tick(now), Action::None);
+
+        assert_eq!(press(&mut app, KeyCode::Tab), Action::List);
+        assert_eq!(app.status, Status::Fetching);
+        assert_eq!(app.tick(now + Duration::from_secs(10)), Action::None);
+    }
+
+    #[test]
+    fn tick_waits_for_the_poll_interval_after_a_list() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![torrent("a")], now);
+        assert_eq!(app.status, Status::Idle);
+
+        assert_eq!(app.tick(now + Duration::from_millis(1999)), Action::None);
+        assert_eq!(app.tick(now + POLL_INTERVAL), Action::List);
+        assert_eq!(app.status, Status::Idle, "later polls must not show Fetching");
+    }
+
+    #[test]
+    fn switching_back_to_downloads_lists_right_away() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![torrent("a")], now);
+
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(
+            app.tick(now + POLL_INTERVAL),
+            Action::None,
+            "no polling on the Search tab"
+        );
+        assert_eq!(press(&mut app, KeyCode::Tab), Action::List);
+    }
+
+    #[test]
+    fn finish_list_keeps_selection_on_the_same_torrent() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![torrent("a"), torrent("b"), torrent("c")], now);
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.downloads_table.selected(), Some(1));
+
+        app.finish_list(now, Ok(vec![torrent("b"), torrent("c"), torrent("a")]));
+        assert_eq!(app.downloads_table.selected(), Some(0));
+    }
+
+    #[test]
+    fn finish_list_clamps_when_the_selected_torrent_is_gone() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![torrent("a"), torrent("b"), torrent("c")], now);
+        press(&mut app, KeyCode::Char('G'));
+
+        app.finish_list(now, Ok(vec![torrent("a")]));
+        assert_eq!(app.downloads_table.selected(), Some(0));
+    }
+
+    #[test]
+    fn finish_list_error_keeps_rows_and_recovers() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![torrent("a"), torrent("b")], now);
+
+        app.finish_list(now, Err("list failed: deluge is down".into()));
+        assert_eq!(app.downloads.len(), 2);
+        assert_eq!(app.status, Status::ListFailed("list failed: deluge is down".into()));
+        assert_eq!(
+            app.tick(now + POLL_INTERVAL),
+            Action::List,
+            "keeps polling after an error"
+        );
+
+        app.finish_list(now, Ok(vec![torrent("a")]));
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn finish_list_leaves_other_statuses_alone() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![], now);
+
+        for status in [Status::Searching, Status::Error("jackett is down".into())] {
+            app.status = status;
+            let want = format!("{:?}", app.status);
+            app.finish_list(now, Ok(vec![torrent("a")]));
+            assert_eq!(format!("{:?}", app.status), want);
+        }
+    }
+
+    #[test]
+    fn failed_list_leaves_search_and_add_statuses_alone() {
+        let now = Instant::now();
+        let mut app = downloads_app(vec![], now);
+
+        for status in [
+            Status::Searching,
+            Status::Adding("ubuntu.iso".into()),
+            Status::Error("add failed: boom".into()),
+        ] {
+            app.status = status;
+            let want = format!("{:?}", app.status);
+            app.finish_list(now, Err("list failed: deluge is down".into()));
+            assert_eq!(format!("{:?}", app.status), want);
+        }
+    }
+
+    #[test]
+    fn first_list_does_not_hide_a_running_search() {
+        let mut app = App::new("ubuntu".into());
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(press(&mut app, KeyCode::Tab), Action::List);
+        assert_eq!(app.status, Status::Searching);
+    }
+
+    #[test]
+    fn downloads_navigation_moves_selection_within_bounds() {
+        let mut app = downloads_app(vec![torrent("a"), torrent("b"), torrent("c")], Instant::now());
+        assert_eq!(app.downloads_table.selected(), Some(0));
+
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.downloads_table.selected(), Some(0));
+
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.downloads_table.selected(), Some(2));
+
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.downloads_table.selected(), Some(0));
+
+        press(&mut app, KeyCode::PageDown);
+        assert_eq!(app.downloads_table.selected(), Some(2));
+    }
+
+    #[test]
+    fn downloads_navigation_with_no_torrents_selects_nothing() {
+        let mut app = downloads_app(vec![], Instant::now());
+
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('G'));
+        assert_eq!(app.downloads_table.selected(), None);
+    }
+
+    #[test]
+    fn q_and_esc_quit_from_downloads() {
+        for key in [KeyCode::Char('q'), KeyCode::Esc] {
+            let mut app = downloads_app(vec![], Instant::now());
+            assert_eq!(press(&mut app, key), Action::Quit, "{key:?}");
+        }
     }
 
     fn result(name: &str) -> SearchResult {
@@ -740,6 +1330,7 @@ mod tests {
             KeyCode::Char('j'),
             KeyCode::Char('/'),
             KeyCode::Tab,
+            KeyCode::BackTab,
             KeyCode::Char('d'),
         ] {
             assert_eq!(press(&mut app, key), Action::None, "{key:?}");
@@ -747,6 +1338,7 @@ mod tests {
         assert_eq!(app.confirming, Some(result("1")));
         assert_eq!(app.table.selected(), Some(1));
         assert_eq!(app.focus, Focus::Results);
+        assert_eq!(app.tab, Tab::Search);
     }
 
     #[test]

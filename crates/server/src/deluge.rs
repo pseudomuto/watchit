@@ -1,10 +1,22 @@
-use std::{fmt, time::Duration};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+use shared::api::download::{Torrent, torrent::State};
 
 /// JSON-RPC error code Deluge returns when the session is missing or expired.
 const NOT_AUTHENTICATED: i64 = 1;
+
+/// Fields requested from `core.get_torrents_status`.
+const TORRENT_FIELDS: [&str; 7] = [
+    "name",
+    "state",
+    "progress",
+    "total_size",
+    "download_payload_rate",
+    "upload_payload_rate",
+    "eta",
+];
 
 #[derive(Debug)]
 pub enum Error {
@@ -60,6 +72,73 @@ struct RpcError {
     message: String,
 }
 
+/// One torrent in a `core.get_torrents_status` response. Rates and ETA are
+/// read as floats so either integers or floats parse.
+#[derive(Deserialize)]
+struct TorrentStatus {
+    name: String,
+    state: String,
+    progress: f64,
+    total_size: i64,
+    download_payload_rate: f64,
+    upload_payload_rate: f64,
+    eta: f64,
+}
+
+impl TorrentStatus {
+    fn into_torrent(self, id: String) -> Torrent {
+        let mut torrent = Torrent {
+            id,
+            name: self.name,
+            progress: self.progress,
+            size_bytes: self.total_size,
+            download_rate: self.download_payload_rate as i64,
+            upload_rate: self.upload_payload_rate as i64,
+            eta_seconds: (self.eta as i64).max(0),
+            ..Default::default()
+        };
+        torrent.set_state(state(&self.state));
+        torrent
+    }
+}
+
+/// Maps a Deluge state string to `State`. Anything else, including `Moving`
+/// and `Allocating`, is `Unspecified`.
+fn state(s: &str) -> State {
+    match s {
+        "Downloading" => State::Downloading,
+        "Queued" => State::Queued,
+        "Checking" => State::Checking,
+        "Error" => State::Error,
+        "Paused" => State::Paused,
+        "Seeding" => State::Seeding,
+        _ => State::Unspecified,
+    }
+}
+
+/// Sorts in-progress torrents first: by state group, then progress
+/// ascending, then name.
+fn sort_torrents(torrents: &mut [Torrent]) {
+    torrents.sort_by(|a, b| {
+        rank(a.state())
+            .cmp(&rank(b.state()))
+            .then(a.progress.total_cmp(&b.progress))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+}
+
+fn rank(state: State) -> u8 {
+    match state {
+        State::Downloading => 0,
+        State::Queued => 1,
+        State::Checking => 2,
+        State::Error => 3,
+        State::Unspecified => 4,
+        State::Paused => 5,
+        State::Seeding => 6,
+    }
+}
+
 /// Returns the Deluge method that adds `uri`, or `None` when its scheme isn't
 /// supported.
 pub fn add_method(uri: &str) -> Option<&'static str> {
@@ -72,9 +151,9 @@ pub fn add_method(uri: &str) -> Option<&'static str> {
     }
 }
 
-/// Adds torrents through the Deluge Web UI's JSON-RPC API. The session cookie
-/// is kept for the life of the client, and the client logs in again when it
-/// expires.
+/// Adds and lists torrents through the Deluge Web UI's JSON-RPC API. The
+/// session cookie is kept for the life of the client, and the client logs in
+/// again when it expires.
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -111,6 +190,24 @@ impl Client {
 
         self.call::<Value>(method, json!([uri, {}])).await?;
         Ok(())
+    }
+
+    /// Lists every torrent in Deluge, in-progress ones first.
+    pub async fn list(&self) -> Result<Vec<Torrent>, Error> {
+        if !self.connected().await? {
+            self.connect().await?;
+        }
+
+        let statuses: HashMap<String, TorrentStatus> = self
+            .call("core.get_torrents_status", json!([{}, TORRENT_FIELDS]))
+            .await?;
+
+        let mut torrents: Vec<Torrent> = statuses
+            .into_iter()
+            .map(|(id, status)| status.into_torrent(id))
+            .collect();
+        sort_torrents(&mut torrents);
+        Ok(torrents)
     }
 
     /// Reports whether the Web UI is connected to a daemon, logging in first
@@ -197,6 +294,11 @@ mod tests {
     use super::*;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:abc";
+    const TORRENTS: &str = include_str!("../testdata/deluge_torrents_status.json");
+
+    fn by_name<'a>(torrents: &'a [Torrent], name: &str) -> &'a Torrent {
+        torrents.iter().find(|t| t.name == name).unwrap()
+    }
 
     fn rpc(result: Value) -> ResponseTemplate {
         ResponseTemplate::new(200).set_body_json(json!({"id": 1, "result": result, "error": null}))
@@ -422,6 +524,104 @@ mod tests {
         let err = client.add(MAGNET).await.unwrap_err();
         assert!(matches!(err, Error::Http(_)), "{err:?}");
         assert!(!err.to_string().contains("secret"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn list_maps_fields() {
+        let server = MockServer::start().await;
+        connected(&server).await;
+        call("core.get_torrents_status")
+            .and(body_partial_json(json!({"params": [{}, TORRENT_FIELDS]})))
+            .respond_with(ResponseTemplate::new(200).set_body_string(TORRENTS))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let torrents = client_for(&server).list().await.unwrap();
+        assert_eq!(torrents.len(), 6);
+
+        let mut want = Torrent {
+            id: "aaaa000000000000000000000000000000000002".into(),
+            name: "ubuntu-24.04.iso".into(),
+            progress: 62.5,
+            size_bytes: 6_114_656_256,
+            download_rate: 4_404_019,
+            upload_rate: 122_880,
+            eta_seconds: 180,
+            ..Default::default()
+        };
+        want.set_state(State::Downloading);
+        assert_eq!(by_name(&torrents, "ubuntu-24.04.iso"), &want);
+
+        // A negative ETA means unknown.
+        assert_eq!(by_name(&torrents, "alpine.iso").eta_seconds, 0);
+        assert_eq!(by_name(&torrents, "mint.iso").state(), State::Unspecified);
+    }
+
+    #[tokio::test]
+    async fn list_sorts_in_progress_torrents_first() {
+        let server = MockServer::start().await;
+        connected(&server).await;
+        call("core.get_torrents_status")
+            .respond_with(ResponseTemplate::new(200).set_body_string(TORRENTS))
+            .mount(&server)
+            .await;
+
+        let torrents = client_for(&server).list().await.unwrap();
+        let names: Vec<&str> = torrents.iter().map(|t| t.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            [
+                "alpine.iso",       // Downloading, 10%
+                "ubuntu-24.04.iso", // Downloading, 62.5%
+                "debian-12.iso",    // Queued
+                "mint.iso",         // Moving (Unspecified)
+                "arch.iso",         // Paused
+                "fedora-41.iso",    // Seeding
+            ]
+        );
+    }
+
+    #[test]
+    fn state_maps_deluge_states() {
+        assert_eq!(state("Downloading"), State::Downloading);
+        assert_eq!(state("Queued"), State::Queued);
+        assert_eq!(state("Checking"), State::Checking);
+        assert_eq!(state("Error"), State::Error);
+        assert_eq!(state("Paused"), State::Paused);
+        assert_eq!(state("Seeding"), State::Seeding);
+        assert_eq!(state("Moving"), State::Unspecified);
+        assert_eq!(state("Allocating"), State::Unspecified);
+        assert_eq!(state("downloading"), State::Unspecified);
+    }
+
+    #[tokio::test]
+    async fn list_logs_in_when_the_session_is_missing() {
+        let server = MockServer::start().await;
+        call("web.connected")
+            .and(header("cookie", "_session_id=abc"))
+            .respond_with(rpc(json!(true)))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        call("web.connected")
+            .respond_with(rpc_error(1, "Not authenticated"))
+            .mount(&server)
+            .await;
+        call("auth.login")
+            .respond_with(rpc(json!(true)).insert_header("set-cookie", "_session_id=abc; Path=/"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        call("core.get_torrents_status")
+            .and(header("cookie", "_session_id=abc"))
+            .respond_with(rpc(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        assert_eq!(client_for(&server).list().await.unwrap(), vec![]);
     }
 
     #[test]

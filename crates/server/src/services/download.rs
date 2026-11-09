@@ -1,4 +1,4 @@
-use shared::api::download::{AddRequest, AddResponse, DownloadService};
+use shared::api::download::{AddRequest, AddResponse, DownloadService, ListRequest, ListResponse};
 use tonic::{Request, Response, Status};
 
 use crate::deluge;
@@ -22,14 +22,20 @@ impl DownloadService for Server {
             return Err(Status::invalid_argument("uri must be a magnet link or an http(s) URL"));
         }
 
-        self.deluge.add(uri).await.map_err(to_status)?;
+        self.deluge.add(uri).await.map_err(|err| to_status("add", err))?;
 
         Ok(Response::new(AddResponse {}))
     }
+
+    async fn list(&self, _request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
+        let torrents = self.deluge.list().await.map_err(|err| to_status("list", err))?;
+
+        Ok(Response::new(ListResponse { torrents }))
+    }
 }
 
-fn to_status(err: deluge::Error) -> Status {
-    eprintln!("add failed: {err}");
+fn to_status(op: &str, err: deluge::Error) -> Status {
+    eprintln!("{op} failed: {err}");
 
     match err {
         deluge::Error::Http(_) | deluge::Error::Status(_) => Status::unavailable(err.to_string()),
@@ -78,6 +84,14 @@ mod tests {
         assert!(!err.message().contains("secret"), "{err:?}");
     }
 
+    #[tokio::test]
+    async fn list_reports_unreachable_deluge_without_leaking_the_password() {
+        let err = server().list(Request::new(ListRequest {})).await.unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::Unavailable, "{err:?}");
+        assert!(!err.message().contains("secret"), "{err:?}");
+    }
+
     #[test]
     fn to_status_maps_deluge_errors() {
         use tonic::Code;
@@ -101,7 +115,7 @@ mod tests {
         ];
 
         for (err, code) in cases {
-            assert_eq!(to_status(err).code(), code);
+            assert_eq!(to_status("add", err).code(), code);
         }
     }
 }

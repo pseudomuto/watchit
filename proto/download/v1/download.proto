@@ -4,6 +4,7 @@ package download.v1;
 
 service DownloadService {
   rpc Add(AddRequest) returns (AddResponse) {}
+  rpc List(ListRequest) returns (ListResponse) {}
 }
 
 message AddRequest {
@@ -11,3 +12,30 @@ message AddRequest {
 }
 
 message AddResponse {}
+
+message ListRequest {}
+
+message ListResponse {
+  repeated Torrent torrents = 1;
+}
+
+message Torrent {
+  enum State {
+    STATE_UNSPECIFIED = 0; // a state string we don't recognize
+    STATE_DOWNLOADING = 1;
+    STATE_QUEUED = 2;
+    STATE_CHECKING = 3;
+    STATE_ERROR = 4;
+    STATE_PAUSED = 5;
+    STATE_SEEDING = 6;
+  }
+
+  string id = 1; // info hash
+  string name = 2;
+  State state = 3;
+  double progress = 4; // 0.0 to 100.0
+  int64 size_bytes = 5;
+  int64 download_rate = 6; // bytes/sec
+  int64 upload_rate = 7; // bytes/sec
+  int64 eta_seconds = 8; // 0 = unknown or done
+}

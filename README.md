@@ -5,11 +5,11 @@ mutual TLS (mTLS).
 
 ## Crates
 
-| Crate    | Binaries          | Purpose                                            |
-| -------- | ----------------- | -------------------------------------------------- |
-| `server` | `server`, `certs` | gRPC server, plus a tool for generating mTLS certs |
-| `client` | `client`          | TUI for searching through the server               |
-| `shared` | -                 | Generated protobuf/gRPC code from `proto/`         |
+| Crate    | Binaries          | Purpose                                                     |
+| -------- | ----------------- | ----------------------------------------------------------- |
+| `server` | `server`, `certs` | gRPC server, plus a tool for generating mTLS certs          |
+| `client` | `client`          | TUI for searching and watching downloads through the server |
+| `shared` | -                 | Generated protobuf/gRPC code from `proto/`                  |
 
 ## Development
 
@@ -104,21 +104,22 @@ client --host myhost.example ubuntu          # host must match a --san on the se
 client --host 10.0.0.5 --port 6000 --certs-dir ~/.config/watchit ubuntu
 ```
 
-The client opens a TUI with a search bar and a results table. The search term is optional; leave it off to start with
-an empty search bar.
+The client opens a TUI with two tabs. Search has a search bar and a results table. Downloads lists every torrent in
+Deluge, in-progress ones first, and refreshes every 2 seconds while it's open. The search term is optional; leave it
+off to start with an empty search bar.
 
-| Key                 | Search bar      | Results               |
-| ------------------- | --------------- | --------------------- |
-| `Enter`             | run the search  | -                     |
-| `Tab`               | go to results   | go to search bar      |
-| `/`                 | (types `/`)      | go to search bar      |
-| `j`/`k`, arrows     | -               | move selection        |
-| `g`/`G`, Home/End   | -               | jump to top/bottom    |
-| `d`                 | (types `d`)     | send to Deluge        |
-| PgUp/PgDn           | -               | move 10 rows          |
-| `Esc`               | go to results   | quit                  |
-| `q`                 | (types `q`)     | quit                  |
-| `Ctrl-C`            | quit            | quit                  |
+| Key                 | Search bar      | Results               | Downloads             |
+| ------------------- | --------------- | --------------------- | --------------------- |
+| `Tab`/`Shift-Tab`   | switch tabs     | switch tabs           | switch tabs           |
+| `Enter`             | run the search  | -                     | -                     |
+| `/`                 | (types `/`)     | go to search bar      | -                     |
+| `j`/`k`, arrows     | -               | move selection        | move selection        |
+| `g`/`G`, Home/End   | -               | jump to top/bottom    | jump to top/bottom    |
+| `d`                 | (types `d`)     | send to Deluge        | -                     |
+| PgUp/PgDn           | -               | move 10 rows          | move 10 rows          |
+| `Esc`               | go to results   | quit                  | quit                  |
+| `q`                 | (types `q`)     | quit                  | quit                  |
+| `Ctrl-C`            | quit            | quit                  | quit                  |
 
 `d` asks before sending. In that prompt, `y`/`Enter` sends the torrent and `n`/`Esc` cancels. Other keys are
 ignored.
