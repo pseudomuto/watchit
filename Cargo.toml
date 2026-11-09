@@ -10,7 +10,6 @@ authors = ["David Muto <david.muto@gmail.com>"]
 [workspace.dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 color-eyre = "0.6.5"
-eyre = "0.6.14"
 ratatui = "0.30.2"
 jiff = "0.2"
 prost = "0.14"
@@ -23,7 +22,6 @@ serde_json = "1"
 tempfile = "3"
 time = "0.3"
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros"] }
-toml = "1.1"
 wiremock = "0.6"
 
 prost-types = "0.14"
