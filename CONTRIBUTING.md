@@ -10,7 +10,7 @@
 
 ## Tooling
 
-Tooling (Rust, `protoc`, `cargo-shear`) is managed by [mise](https://mise.jdx.dev).
+Tooling (Rust, `protoc`, `cargo-shear`, `actionlint`, `shellcheck`) is managed by [mise](https://mise.jdx.dev).
 
 ```sh
 mise install          # install tools
@@ -18,7 +18,8 @@ mise run build        # debug build
 mise run test         # run tests
 mise run fmt          # format with nightly rustfmt
 mise run lint:deps    # check for unused dependencies
-mise run test:ci      # fmt check, clippy, unused deps, tests, and build
+mise run lint:actions # lint GitHub Actions workflows
+mise run test:ci      # fmt check, clippy, unused deps, workflow lint, tests, and build
 ```
 
 Run `mise run test:ci` before committing.
