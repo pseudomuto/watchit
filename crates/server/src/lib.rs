@@ -1,17 +1,16 @@
-pub mod certs;
 pub mod deluge;
 pub mod jackett;
 pub mod services;
 
 use std::{io, path::Path};
 
-use shared::api::{download::DownloadServiceServer, search::SearchServiceServer};
+use shared::{
+    api::{download::DownloadServiceServer, search::SearchServiceServer},
+    certs::{self, Bundle},
+};
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig, server::Router};
 
-use crate::{
-    certs::Bundle,
-    services::{DownloadServer, SearchServer},
-};
+use crate::services::{DownloadServer, SearchServer};
 
 /// Loads `ca.pem`, `server.pem` and `server.key` from `dir`. Clients must
 /// present a certificate signed by the CA.

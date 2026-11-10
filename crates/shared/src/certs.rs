@@ -62,7 +62,8 @@ impl Bundle {
     }
 }
 
-pub(crate) fn read(path: &Path) -> io::Result<String> {
+/// Reads a PEM file, naming the path in any error.
+pub fn read(path: &Path) -> io::Result<String> {
     fs::read_to_string(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))
 }
 

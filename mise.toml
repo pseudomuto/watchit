@@ -81,7 +81,7 @@ hide = true
 run = """
 set -eu
 dir=hack/certs
-[ -f "$dir/ca.pem" ] || cargo run -q --bin certs -- --dir "$dir" ca
-[ -f "$dir/server.pem" ] || cargo run -q --bin certs -- --dir "$dir" server --san localhost --san 127.0.0.1
-[ -f "$dir/client.pem" ] || cargo run -q --bin certs -- --dir "$dir" client --name dev
+[ -f "$dir/ca.pem" ] || cargo run -q --bin client -- --certs-dir "$dir" certs ca
+[ -f "$dir/server.pem" ] || cargo run -q --bin client -- --certs-dir "$dir" certs server --san localhost --san 127.0.0.1
+[ -f "$dir/client.pem" ] || cargo run -q --bin client -- --certs-dir "$dir" certs client --name dev
 """

@@ -9,36 +9,36 @@ client talks to it over mutual TLS (mTLS).
 - Search your Jackett indexers from a terminal UI, with seeders, leechers, size, and date for each result.
 - Send a result to Deluge with one key, after a confirmation prompt.
 - Watch every torrent in Deluge on a Downloads tab, in-progress ones first, refreshed every 2 seconds.
-- Keep traffic private with mTLS and a CA you own. A bundled `certs` tool creates everything you need.
+- Keep traffic private with mTLS and a CA you own. The client's `certs` command creates everything you need.
 
 ## Installation
 
 You need Rust 1.99 or newer and [`protoc`](https://protobuf.dev/installation/). From a checkout of this repo:
 
 ```sh
-cargo install --locked --path crates/server   # installs `server` and `certs`
+cargo install --locked --path crates/server   # installs `server`
 cargo install --locked --path crates/client   # installs `client`
 ```
 
-Install the server on the machine that runs Jackett and Deluge, and the client (plus `certs`) on your laptop.
+Install the server on the machine that runs Jackett and Deluge, and the client on your laptop.
 
 ## Getting started
 
 ### 1. Create certs
 
-Run these on your laptop. Everything is written to `./certs` (change it with `--dir`). Existing files are never
+Run these on your laptop. Everything is written to `./certs` (change it with `--certs-dir`). Existing files are never
 overwritten, and keys are written with `0600` permissions.
 
 ```sh
 # Create the CA (valid for 10 years)
-certs ca
+client certs ca
 
 # Issue the server cert (valid for 1 year). Pass every DNS name and IP you
 # will use to reach the server. Add `--san localhost` for local testing.
-certs server --san myhost.example --san 10.0.0.5
+client certs server --san myhost.example --san 10.0.0.5
 
 # Issue a client cert (valid for 1 year)
-certs client --name laptop
+client certs client --name laptop
 ```
 
 Then copy the server's files over:
@@ -131,7 +131,7 @@ Leaf certs expire after a year. To renew, delete the old pair and issue a new on
 
 ```sh
 rm certs/server.pem certs/server.key
-certs server --san myhost.example
+client certs server --san myhost.example
 ```
 
 If you get `certificate not valid for name`, the client's `--host` isn't one of the server cert's SANs. Reissue the

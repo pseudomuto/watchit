@@ -2,11 +2,11 @@
 
 ## Layout
 
-| Crate    | Binaries          | Purpose                                                     |
-| -------- | ----------------- | ----------------------------------------------------------- |
-| `server` | `server`, `certs` | gRPC server, plus a tool for generating mTLS certs          |
-| `client` | `client`          | TUI for searching and watching downloads through the server |
-| `shared` | -                 | Generated protobuf/gRPC code from `proto/`                  |
+| Crate    | Binaries | Purpose                                                                          |
+| -------- | -------- | -------------------------------------------------------------------------------- |
+| `server` | `server` | gRPC server                                                                      |
+| `client` | `client` | TUI for searching and watching downloads, plus `certs` for generating mTLS certs |
+| `shared` | -        | Generated protobuf/gRPC code from `proto/`, and mTLS cert generation/loading     |
 
 ## Tooling
 

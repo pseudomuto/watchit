@@ -1,10 +1,12 @@
 use std::{fs, path::Path};
 
 use client::api::Client;
-use server::certs;
-use shared::api::{
-    download::AddRequest,
-    search::{SearchRequest, SearchServiceClient},
+use shared::{
+    api::{
+        download::AddRequest,
+        search::{SearchRequest, SearchServiceClient},
+    },
+    certs,
 };
 use tokio::net::TcpListener;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, server::TcpIncoming};
