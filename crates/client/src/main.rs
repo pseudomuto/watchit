@@ -10,6 +10,7 @@ use color_eyre::{Result, eyre::bail};
 use shared::certs::{self, Bundle};
 
 #[derive(Parser)]
+#[command(name = "watchit")]
 struct Cli {
     /// DNS name or IP address of the server. Must match a SAN on its
     /// certificate.

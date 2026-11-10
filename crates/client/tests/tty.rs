@@ -2,7 +2,7 @@ use std::process::{Command, Stdio};
 
 #[test]
 fn client_without_a_terminal_fails_with_a_clear_error() {
-    let out = Command::new(env!("CARGO_BIN_EXE_client"))
+    let out = Command::new(env!("CARGO_BIN_EXE_watchit"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

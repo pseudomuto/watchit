@@ -15,26 +15,26 @@ client talks to it over mutual TLS (mTLS).
 
 ### From a release
 
-Each [release](https://github.com/pseudomuto/watchit/releases) has a server and a client archive for macOS (Apple
-Silicon and Intel) and Linux (x86_64 and arm64, plus a static musl build for x86_64). Download the server archive on
-the machine that runs Jackett and Deluge, and the client archive on your laptop, then check them against
-`SHA256SUMS`:
+Each [release](https://github.com/pseudomuto/watchit/releases) has a `watchit` archive (the client) and a
+`watchit-server` archive for macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64, plus a static musl build for
+x86_64). Download `watchit-server` on the machine that runs Jackett and Deluge, and `watchit` on your laptop, then check
+them against `SHA256SUMS`:
 
 ```sh
 shasum -a 256 --check --ignore-missing SHA256SUMS
-tar -xzf watchit-client-v*-aarch64-apple-darwin.tar.gz   # extracts `client`
+tar -xzf watchit-v*-aarch64-apple-darwin.tar.gz   # extracts `watchit`
 ```
 
 The binaries aren't signed, so macOS blocks them if they were downloaded with a browser. Clear the quarantine flag with
-`xattr -d com.apple.quarantine client`.
+`xattr -d com.apple.quarantine watchit`.
 
 ### From source
 
 You need Rust 1.99 or newer and [`protoc`](https://protobuf.dev/installation/). From a checkout of this repo:
 
 ```sh
-cargo install --locked --path crates/server   # installs `server`
-cargo install --locked --path crates/client   # installs `client`
+cargo install --locked --path crates/server   # installs `watchit-server`
+cargo install --locked --path crates/client   # installs `watchit`
 ```
 
 Install the server on the machine that runs Jackett and Deluge, and the client on your laptop.
@@ -48,14 +48,14 @@ overwritten, and keys are written with `0600` permissions.
 
 ```sh
 # Create the CA (valid for 10 years)
-client certs ca
+watchit certs ca
 
 # Issue the server cert (valid for 1 year). Pass every DNS name and IP you
 # will use to reach the server. Add `--san localhost` for local testing.
-client certs server --san myhost.example --san 10.0.0.5
+watchit certs server --san myhost.example --san 10.0.0.5
 
 # Issue a client cert (valid for 1 year)
-client certs client --name laptop
+watchit certs client --name laptop
 ```
 
 Then copy the server's files over:
@@ -83,15 +83,15 @@ history and `ps`.
 ```sh
 export WATCHIT_JACKETT_API_KEY=...   # from the Jackett dashboard
 export WATCHIT_DELUGE_PASSWORD=...   # Deluge Web UI password
-server --jackett-url http://localhost:9117   # listens on 0.0.0.0:50051, reads certs from ./certs
-server --jackett-url http://localhost:9117 --host 10.0.0.5 --port 6000 --certs-dir /etc/watchit
+watchit-server --jackett-url http://localhost:9117   # listens on 0.0.0.0:50051, reads certs from ./certs
+watchit-server --jackett-url http://localhost:9117 --host 10.0.0.5 --port 6000 --certs-dir /etc/watchit
 ```
 
 ### 3. Connect the client
 
 ```sh
-client --host myhost.example ubuntu          # host must match a --san on the server cert
-client --host 10.0.0.5 --port 6000 --certs-dir ~/.config/watchit ubuntu
+watchit --host myhost.example ubuntu          # host must match a --san on the server cert
+watchit --host 10.0.0.5 --port 6000 --certs-dir ~/.config/watchit ubuntu
 ```
 
 The search term is optional; leave it off to start with an empty search bar.
@@ -148,7 +148,7 @@ Leaf certs expire after a year. To renew, delete the old pair and issue a new on
 
 ```sh
 rm certs/server.pem certs/server.key
-client certs server --san myhost.example
+watchit certs server --san myhost.example
 ```
 
 If you get `certificate not valid for name`, the client's `--host` isn't one of the server cert's SANs. Reissue the

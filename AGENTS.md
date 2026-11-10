@@ -5,13 +5,13 @@ Conventions for working in this repo. User-facing docs live in [README.md](READM
 
 ## Layout
 
-| Path             | What                                                                         |
-| ---------------- | ---------------------------------------------------------------------------- |
-| `crates/server`  | gRPC server (`server` binary) that talks to Jackett and Deluge               |
-| `crates/client`  | `client` binary: ratatui TUI, plus `client certs` for generating mTLS certs  |
-| `crates/shared`  | Generated gRPC code (`shared::api`) and mTLS cert handling (`shared::certs`) |
-| `proto/<svc>/v1` | Protobuf definitions, one directory per service                              |
-| `hack/certs`     | Dev certs from `mise run certs:dev` (gitignored)                             |
+| Path             | What                                                                          |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `crates/server`  | `watchit-server` binary: gRPC server that talks to Jackett and Deluge         |
+| `crates/client`  | `watchit` binary: ratatui TUI, plus `watchit certs` for generating mTLS certs |
+| `crates/shared`  | Generated gRPC code (`shared::api`) and mTLS cert handling (`shared::certs`)  |
+| `proto/<svc>/v1` | Protobuf definitions, one directory per service                               |
+| `hack/certs`     | Dev certs from `mise run certs:dev` (gitignored)                              |
 
 ## Commands
 
@@ -83,7 +83,8 @@ mise run test         # tests only
 - The version lives only in the root `[workspace.package]`. Don't bump it by hand; the Release workflow does it.
 - Releasing: run the **Release** workflow on `main` with `patch`, `minor` or `major`. It bumps `Cargo.toml` and
   `Cargo.lock`, commits `chore: release vX.Y.Z` to `main`, tags it, builds every target in `rust-toolchain.toml`
-  natively, and publishes `watchit-{server,client}-vX.Y.Z-<target>.tar.gz` plus `SHA256SUMS`.
+  natively, and publishes `watchit-vX.Y.Z-<target>.tar.gz` (client) and `watchit-server-vX.Y.Z-<target>.tar.gz`
+  plus `SHA256SUMS`.
 - If a build fails after the tag is pushed, use **Re-run failed jobs**. Dispatching again bumps the version a second
   time.
 

@@ -7,6 +7,7 @@ use clap::Parser;
 use color_eyre::{Result, eyre::eyre};
 
 #[derive(Parser)]
+#[command(name = "watchit-server")]
 struct Cli {
     /// IP address to bind to.
     #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::UNSPECIFIED))]
