@@ -13,6 +13,23 @@ client talks to it over mutual TLS (mTLS).
 
 ## Installation
 
+### From a release
+
+Each [release](https://github.com/pseudomuto/watchit/releases) has a server and a client archive for macOS (Apple
+Silicon and Intel) and Linux (x86_64 and arm64, plus a static musl build for x86_64). Download the server archive on
+the machine that runs Jackett and Deluge, and the client archive on your laptop, then check them against
+`SHA256SUMS`:
+
+```sh
+shasum -a 256 --check --ignore-missing SHA256SUMS
+tar -xzf watchit-client-v*-aarch64-apple-darwin.tar.gz   # extracts `client`
+```
+
+The binaries aren't signed, so macOS blocks them if they were downloaded with a browser. Clear the quarantine flag with
+`xattr -d com.apple.quarantine client`.
+
+### From source
+
 You need Rust 1.99 or newer and [`protoc`](https://protobuf.dev/installation/). From a checkout of this repo:
 
 ```sh
