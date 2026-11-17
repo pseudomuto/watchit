@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Installs Rust, protoc and cargo-shear from mise.toml/mise.lock.
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
 
       # `fmt:check` uses nightly rustfmt, which rust-toolchain.toml doesn't pin.
       - name: Install nightly rustfmt
