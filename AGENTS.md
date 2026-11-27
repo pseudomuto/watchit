@@ -11,24 +11,25 @@ Conventions for working in this repo. User-facing docs live in [README.md](READM
 | `crates/client`  | `watchit` binary: ratatui TUI, plus `watchit certs` for generating mTLS certs |
 | `crates/shared`  | Generated gRPC code (`shared::api`) and mTLS cert handling (`shared::certs`)  |
 | `proto/<svc>/v1` | Protobuf definitions, one directory per service                               |
-| `hack/certs`     | Dev certs from `mise run certs:dev` (gitignored)                              |
+| `hack/certs`     | Dev certs from `dev certs:dev` (gitignored)                                   |
 
 ## Commands
 
-All tooling (Rust, `protoc`, `cargo-shear`, `actionlint`, `shellcheck`) comes from mise. Run tasks through mise rather
-than calling the tools directly, so local runs match CI.
+All tooling (Rust, `protoc`, `cargo-shear`, `actionlint`, `shellcheck`) comes from [dev](https://github.com/pseudomuto/dev)
+via `dev.yaml`; `dev up` installs it. Run commands through dev rather than calling the tools directly, so local runs
+match CI.
 
 ```sh
-mise run test:ci      # everything CI runs: fmt check, clippy, unused deps, workflow lint, tests, build
-mise run fmt          # format (nightly rustfmt)
-mise run test         # tests only
+dev test:ci      # everything CI runs: fmt check, clippy, unused deps, workflow lint, tests, build
+dev fmt          # format (nightly rustfmt)
+dev test         # tests only
 ```
 
-`mise run test:ci` must pass before committing.
+`dev test:ci` must pass before committing.
 
 ## Rust style
 
-- **Formatting:** run `mise run fmt` regularly, and always before committing. `rustfmt.toml` is the source of truth;
+- **Formatting:** run `dev fmt` regularly, and always before committing. `rustfmt.toml` is the source of truth;
   don't hand-format around it.
 - **Lints:** clippy runs with `-D warnings`. Never use `mod.rs`; a module with children is `foo.rs` plus a `foo/`
   directory.
@@ -95,13 +96,13 @@ mise run test         # tests only
 - Before adding or updating an action, look up its current release (`gh api repos/<owner>/<repo>/releases`) instead of
   relying on memory.
 - Dependabot (`.github/dependabot.yaml`) bumps action SHAs and cargo deps weekly.
-- Workflows are linted by `mise run lint:actions` (actionlint + shellcheck). Pass inputs and step outputs to `run:`
+- Workflows are linted by `dev lint:actions` (actionlint + shellcheck). Pass inputs and step outputs to `run:`
   scripts through `env:`, not by interpolating `${{ }}` into the script.
 
 ## Tooling
 
-- Add new tools to `[tools]` in `mise.toml`, then run `mise lock` so `mise.lock` has checksums for every platform CI
-  uses.
+- Add new tools to `deps` in `dev.yaml` with a pinned version (not `latest`), then run `dev up`. CI's dev action
+  caches installs keyed on `dev.yaml`, so an unpinned version is re-downloaded on every run.
 
 ## Docs and prose
 
@@ -116,4 +117,4 @@ Applies to docs, comments, commit messages and PR text.
 - **rust-analyzer rewrites `Cargo.lock`** whenever `Cargo.toml` changes on disk. Avoid temporary edits to `Cargo.toml`,
   check `git diff Cargo.lock` right before staging, and run `cargo build --locked` after committing manifest changes.
 - **zsh reserves `path`** (it's tied to `$PATH`). Don't use it as a variable name in shell scripts.
-- `cargo test` alone doesn't catch everything CI does; use `mise run test:ci`.
+- `cargo test` alone doesn't catch everything CI does; use `dev test:ci`.

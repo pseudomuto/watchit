@@ -33,9 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
-        with:
-          install_args: rust
+      - uses: pseudomuto/dev@ecf701458d22c8cc98192fc17693aff18ae1ef4f # v0.6.0
 
       - name: Compute next version
         id: version
@@ -111,10 +109,6 @@ jobs:
         with:
           ref: v${{ needs.prepare.outputs.version }}
 
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
-        with:
-          install_args: rust protoc
-
       - name: Install musl tools
         if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -122,6 +116,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
+
+      - uses: pseudomuto/dev@ecf701458d22c8cc98192fc17693aff18ae1ef4f # v0.6.0
 
       - name: Build
         env:

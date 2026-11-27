@@ -1,0 +1,88 @@
+name: watchit
+
+deps:
+  # First, so cargo exists before mise builds cargo:cargo-shear with it.
+  rust:
+    - rust-toolchain.toml
+    # rustfmt.toml uses options only nightly rustfmt has.
+    - nightly: [rustfmt]
+  actionlint: 1.7.12
+  "cargo:cargo-shear": 1.14.0
+  protoc: "35.1"
+  shellcheck: 0.11.0
+
+commands:
+  build:
+    desc: Build the project in debug mode
+    run: cargo build "$@"
+
+  build:release:
+    desc: Build the project in release mode
+    run: cargo build --release "$@"
+
+  test:
+    desc: Run the tests
+    run: cargo test --all-features "$@"
+
+  test:verbose:
+    desc: Run the tests without capturing output
+    run: cargo test --all-features "$@" -- --no-capture
+
+  test:ci:
+    desc: Run the full CI pipeline
+    depends:
+      - fmt:check
+      - lint
+      - test
+      - build
+
+  fmt:
+    desc: Run cargo fmt
+    run: cargo +nightly fmt --all
+
+  fmt:check:
+    desc: Check if cargo fmt would change anything
+    run: cargo +nightly fmt --all -- --check
+
+  lint:
+    desc: Run clippy
+    depends:
+      - lint:deps
+      - lint:actions
+    run: cargo clippy --all-targets --all-features -- -D warnings
+
+  lint:deps:
+    desc: Check for unused dependencies
+    run: cargo shear
+
+  lint:actions:
+    desc: Lint the GitHub Actions workflows
+    run: actionlint
+
+  lint:fix:
+    desc: Run clippy and auto-fix where possible
+    run: cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged
+
+  server:
+    desc: Run the server on 127.0.0.1 with dev certs (needs WATCHIT_JACKETT_API_KEY and WATCHIT_DELUGE_PASSWORD)
+    depends: [certs:dev]
+    run: >-
+      cargo run --bin watchit-server --
+      --host 127.0.0.1
+      --certs-dir hack/certs
+      --jackett-url "${JACKETT_URL:-http://localhost:9117}"
+      --deluge-url "${DELUGE_URL:-http://localhost:8112}"
+      "$@"
+
+  client:
+    desc: Run the client against the local server with dev certs
+    depends: [certs:dev]
+    run: cargo run --bin watchit -- --certs-dir hack/certs "$@"
+
+  certs:dev:
+    desc: Generate dev certs in hack/certs (skips any that already exist)
+    run:
+      - dir=hack/certs
+      - '[ -f "$dir/ca.pem" ] || cargo run -q --bin watchit -- --certs-dir "$dir" certs ca'
+      - '[ -f "$dir/server.pem" ] || cargo run -q --bin watchit -- --certs-dir "$dir" certs server --san localhost --san 127.0.0.1'
+      - '[ -f "$dir/client.pem" ] || cargo run -q --bin watchit -- --certs-dir "$dir" certs client --name dev'
